@@ -1,0 +1,18 @@
+[package]
+name = "uia_interaction"
+version = "0.1.0"
+edition = "2021"
+description = "A high-level interface to interact with UI elements of applications"
+license = "MIT"
+
+[dependencies]
+uiautomation = { version = "0.18", features = ["log"] }
+log = "0.4.27"
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+  "Win32_System_ProcessStatus",
+  "Win32_System_Threading",
+  "Win32_Security",
+  "Win32_UI_HiDpi",
+] }
