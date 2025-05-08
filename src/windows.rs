@@ -1,12 +1,9 @@
-use log::{debug, info, warn};
-use uiautomation::controls::ControlType;
+use log::debug;
 use uiautomation::core::UIElement;
-use uiautomation::types::UIProperty;
-use uiautomation::variants::Variant;
 use std::error::Error;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-use windows::Win32::Foundation::{HWND, RECT, HANDLE};
+use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextW, GetClassNameW, GetWindowLongPtrW, GWL_EXSTYLE,
     GWL_STYLE, IsWindowVisible, GetWindowThreadProcessId, GetWindowRect, GetParent,
@@ -16,7 +13,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use std::ptr::null_mut;
 
 use crate::automation::UIAutomation;
 

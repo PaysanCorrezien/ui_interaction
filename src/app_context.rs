@@ -10,11 +10,8 @@
 
 use crate::elements::ElementFinder;
 use crate::text::TextHandler;
-use log::{info, error};
 use uiautomation::core::UIElement;
 use uiautomation::types::UIProperty;
-use uiautomation::variants::Variant;
-use uiautomation::controls::ControlType;
 use std::error::Error;
 
 /// Represents the application context around a focused element

@@ -11,7 +11,8 @@ use uia_interaction::{
 };
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Initialize the logger
+    // Initialize the logger with info level
+    std::env::set_var("RUST_LOG", "info");
     env_logger::init();
 
     // Wait for 3 seconds to give you time to switch to your target window
@@ -39,8 +40,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Get the currently focused element info
     match element_finder.get_focused_element() {
-        Ok((_, name, control_type)) => {
+        Ok((element, name, control_type)) => {
             info!("Focused Element - Name: {}, Type: {}", name, control_type);
+            
+            // Try to get text from the focused element
+            match text_handler.get_text(&element) {
+                Ok(text) => info!("Element text: {}", text),
+                Err(e) => error!("Failed to get element text: {}", e),
+            }
         }
         Err(e) => error!("Failed to get focused element: {}", e),
     }
