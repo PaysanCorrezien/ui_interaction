@@ -3,18 +3,16 @@
 //! This library provides a high-level interface to Windows UI Automation,
 //! making it easier to interact with UI elements programmatically.
 
-pub mod automation;
-pub mod elements;
-pub mod text;
-pub mod windows;
-pub mod app_context;
-
 // Re-export commonly used types
-pub use automation::UIAutomation;
-pub use elements::ElementFinder;
-pub use text::TextHandler;
-pub use windows::WindowManager;
-pub use app_context::AppContext;
 
-// Re-export the main helper for backward compatibility
-pub use automation::UiautomationHelper;
+mod core;
+mod platform;
+
+pub use core::{UIAutomation, Window, UIElement, UIAutomationFactory};
+
+// Re-export platform-specific types for advanced usage
+#[cfg(target_os = "windows")]
+pub use platform::windows::{WindowsUIAutomation, WindowsWindow, WindowsElement};
+
+#[cfg(target_os = "linux")]
+pub use platform::linux::{LinuxUIAutomation, LinuxWindow, LinuxUIElement};

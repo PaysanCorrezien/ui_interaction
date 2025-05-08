@@ -26,3 +26,14 @@ This library provides a Rust interface to the Windows UI Automation framework, a
 
 - [ ] Optimize performance
   - Add caching mechanisms for frequently accessed elements
+
+# Project Structure
+src/
+├── lib.rs
+├── core.rs               # Traits + shared structs
+├── platform/
+│   ├── mod.rs
+│   ├── windows/*        # UIA impl
+│   └── linux/*          # AT-SPI impl
+├── python/
+│   └── script_context.rs # pyo3 bindings

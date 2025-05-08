@@ -1,5 +1,8 @@
-use log::debug;
+use log::{debug, info, warn};
+use uiautomation::controls::ControlType;
 use uiautomation::core::UIElement;
+use uiautomation::types::UIProperty;
+use uiautomation::variants::Variant;
 use std::error::Error;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
@@ -51,7 +54,7 @@ impl WindowInfo {
     pub fn get_current() -> Option<Self> {
         unsafe {
             let hwnd = GetForegroundWindow();
-            if hwnd.is_invalid() {
+            if hwnd.0 == 0 {
                 debug!("GetForegroundWindow returned NULL handle");
                 return None;
             }
@@ -100,8 +103,10 @@ impl WindowInfo {
             let has_menu = !GetMenu(hwnd).is_invalid();
 
             // Get parent and owner windows
-            let parent_hwnd = GetParent(hwnd).ok();
-            let owner_hwnd = GetWindow(hwnd, GW_OWNER).ok();
+            let parent_hwnd = GetParent(hwnd);
+            let owner_hwnd = GetWindow(hwnd, GW_OWNER);
+            let parent_hwnd = if parent_hwnd.0 != 0 { Some(parent_hwnd) } else { None };
+            let owner_hwnd = if owner_hwnd.0 != 0 { Some(owner_hwnd) } else { None };
 
             // Get process and thread IDs
             let mut process_id = 0u32;
@@ -119,7 +124,7 @@ impl WindowInfo {
                 ) {
                     // Get process path
                     let mut path_buf = [0u16; 512];
-                    let path_len = GetModuleFileNameExW(Some(process_handle), None, &mut path_buf);
+                    let path_len = GetModuleFileNameExW(process_handle, None, &mut path_buf);
                     if path_len > 0 {
                         process_path = OsString::from_wide(&path_buf[..path_len as usize])
                             .to_string_lossy()
