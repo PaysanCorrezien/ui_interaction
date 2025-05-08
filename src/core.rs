@@ -71,27 +71,4 @@ pub trait UIAutomation {
     
     /// Find an element by its type
     fn find_element_by_type(&self, element_type: &str) -> Result<Box<dyn UIElement>, Box<dyn Error>>;
-}
-
-/// Factory for creating UI automation instances
-pub struct UIAutomationFactory;
-
-impl UIAutomationFactory {
-    /// Create a new UI automation instance for the current platform
-    pub fn new() -> Result<Box<dyn UIAutomation>, Box<dyn Error>> {
-        #[cfg(target_os = "windows")]
-        {
-            Ok(Box::new(crate::platform::windows::WindowsUIAutomation::new()?))
-        }
-        
-        #[cfg(target_os = "linux")]
-        {
-            Ok(Box::new(crate::platform::linux::LinuxUIAutomation::new()?))
-        }
-        
-        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-        {
-            Err("Unsupported platform".into())
-        }
-    }
 } 

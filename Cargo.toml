@@ -17,6 +17,9 @@ windows = { version = "0.61", features = [
   "Win32_Security",
   "Win32_UI_HiDpi",
 ] }
+pyo3 = { version = "0.21", features = ["auto-initialize"] }
+anyhow = "1"
+thiserror = "1"
 
 [[example]]
 name = "main"

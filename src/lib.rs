@@ -4,11 +4,12 @@
 //! making it easier to interact with UI elements programmatically.
 
 // Re-export commonly used types
+pub mod core;
+pub mod platform;
+pub mod factory;
 
-mod core;
-mod platform;
-
-pub use core::{UIAutomation, Window, UIElement, UIAutomationFactory};
+pub use core::{UIAutomation, Window, UIElement};
+pub use factory::UIAutomationFactory;
 
 // Re-export platform-specific types for advanced usage
 #[cfg(target_os = "windows")]
