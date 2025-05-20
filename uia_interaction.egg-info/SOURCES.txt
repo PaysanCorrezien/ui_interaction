@@ -1,0 +1,8 @@
+pyproject.toml
+setup.py
+uia_interaction/__init__.py
+uia_interaction.egg-info/PKG-INFO
+uia_interaction.egg-info/SOURCES.txt
+uia_interaction.egg-info/dependency_links.txt
+uia_interaction.egg-info/not-zip-safe
+uia_interaction.egg-info/top_level.txt

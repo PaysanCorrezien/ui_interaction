@@ -3,6 +3,7 @@ use std::{thread, time::Duration};
 
 // Import our library modules
 use uia_interaction::UIAutomationFactory;
+use uia_interaction::core::{UIAutomation, UIQuery, UITree, AppendPosition};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the logger with info level
@@ -71,10 +72,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     info!("Text set successfully");
 
-    // Append text to the last line
+    // Append text at end of text (default)
     let append_text = " - Appended text";
-    info!("Appending text: {}", append_text);
-    element.append_text(append_text)?;
+    info!("Appending text at end of text: {}", append_text);
+    element.append_text(append_text, AppendPosition::EndOfText)?;
+
+    // Append text at end of current line
+    let append_text_line = " [EOL]";
+    info!("Appending text at end of line: {}", append_text_line);
+    element.append_text(append_text_line, AppendPosition::EndOfLine)?;
+
+    // Append text at current cursor position
+    let append_text_cursor = " [CURSOR]";
+    info!("Appending text at current cursor: {}", append_text_cursor);
+    element.append_text(append_text_cursor, AppendPosition::CurrentCursor)?;
 
     // Verify appended text
     let final_text = element.get_text()?;

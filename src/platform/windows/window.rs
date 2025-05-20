@@ -1,9 +1,19 @@
-use uiautomation::core::UIElement as UIAutomationElement;
-use uiautomation::types::UIProperty;
-use uiautomation::variants::Variant;
 use std::error::Error;
+use std::collections::HashMap;
+use std::sync::Arc;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
+use chrono::Utc;
+use log::debug;
+use std::convert::TryInto;
+
+use uiautomation::core::UIElement as UIAutomationElement;
+use uiautomation::types::{TreeScope, UIProperty};
+use uiautomation::variants::Variant;
+use uiautomation::controls::ControlType;
+
+use crate::core::{Window, UIElement, UITree, UIQuery, UITreeNode};
+use super::automation::WindowsUIAutomation;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
     GetForegroundWindow, GetWindowTextW, GetClassNameW, GetWindowLongPtrW, GWL_EXSTYLE,
@@ -14,16 +24,6 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use log::debug;
-
-use crate::core::{Window, UIElement, UIAutomation};
-
-/// Windows-specific window implementation
-pub struct WindowsWindow {
-    element: UIAutomationElement,
-    automation: Box<dyn UIAutomation>,
-    window_info: Option<WindowInfo>,
-}
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -175,12 +175,24 @@ impl WindowInfo {
     }
 }
 
+/// Windows-specific window implementation
+#[derive(Clone)]
+pub struct WindowsWindow {
+    element: UIAutomationElement,
+    automation: Arc<WindowsUIAutomation>,
+    window_info: Option<WindowInfo>,
+}
+
 impl WindowsWindow {
-    pub fn new(element: UIAutomationElement, automation: Box<dyn UIAutomation>) -> Result<Self, Box<dyn Error>> {
+    pub fn new(element: UIAutomationElement, automation: Arc<WindowsUIAutomation>) -> Result<Self, Box<dyn Error>> {
+        let window_info = WindowInfo::get_current();
+        if window_info.is_none() {
+            debug!("Failed to get window info using Windows API, falling back to UIAutomation");
+        }
         Ok(WindowsWindow { 
             element, 
             automation,
-            window_info: WindowInfo::get_current(),
+            window_info,
         })
     }
 }
@@ -190,8 +202,7 @@ impl Window for WindowsWindow {
         if let Some(info) = &self.window_info {
             Ok(info.title.clone())
         } else {
-            let name: Variant = self.element.get_property_value(UIProperty::Name)?;
-            Ok(name.get_string()?)
+            Ok(self.element.get_name()?)
         }
     }
 
@@ -328,6 +339,229 @@ impl Window for WindowsWindow {
     }
 
     fn get_focused_element(&self) -> Result<Box<dyn UIElement>, Box<dyn Error>> {
-        self.automation.get_focused_element()
+        let element = self.automation.automation.lock()?.get_focused_element()?;
+        Ok(self.automation.element_to_ui_element(element))
+    }
+
+    fn get_ui_tree(&self) -> Result<UITree, Box<dyn Error>> {
+        let root_element = self.element.clone();
+        let root_name = root_element.get_name()?;
+        let root_class = root_element.get_classname()?;
+        
+        // Create properties map
+        let mut properties = HashMap::new();
+        properties.insert("name".to_string(), root_name.clone());
+        properties.insert("class_name".to_string(), root_class.clone());
+        
+        // Get control type properly
+        let control_type = if let Ok(variant) = root_element.get_property_value(UIProperty::ControlType) {
+            let control_type_id: i32 = variant.try_into()?;
+            if let Ok(control_type) = ControlType::try_from(control_type_id) {
+                control_type.to_string()
+            } else {
+                "Unknown".to_string()
+            }
+        } else {
+            "Unknown".to_string()
+        };
+        
+        properties.insert("control_type".to_string(), control_type.clone());
+        
+        // Get enabled state
+        let is_enabled = if let Ok(variant) = root_element.get_property_value(UIProperty::IsEnabled) {
+            let enabled: bool = variant.try_into().unwrap_or(false);
+            enabled
+        } else {
+            false
+        };
+        properties.insert("enabled".to_string(), is_enabled.to_string());
+        
+        // Get keyboard focusable state
+        let is_keyboard_focusable = if let Ok(variant) = root_element.get_property_value(UIProperty::IsKeyboardFocusable) {
+            let focusable: bool = variant.try_into().unwrap_or(false);
+            focusable
+        } else {
+            false
+        };
+        properties.insert("keyboard_focusable".to_string(), is_keyboard_focusable.to_string());
+        
+        // Create a tree walker for traversing the UI tree
+        let automation = self.automation.automation.lock()?;
+        let walker = automation.create_tree_walker()?;
+        
+        // Create a WindowsElement wrapper for the root with the tree walker
+        let root_windows_element = super::element::WindowsElement::new(root_element.clone(), Some(walker));
+        
+        // Recursively build the tree
+        fn build_tree_node(element: &super::element::WindowsElement) -> Result<UITreeNode, Box<dyn Error>> {
+            let name = element.get_name()?;
+            let control_type = if let Ok(variant) = element.get_control_type_variant() {
+                if let Ok(control_type) = ControlType::try_from(variant) {
+                    control_type.to_string()
+                } else {
+                    "Unknown".to_string()
+                }
+            } else {
+                "Unknown".to_string()
+            };
+            
+            let properties = element.get_properties()?;
+            let bounds = element.get_bounds()?;
+            let is_enabled = element.is_enabled()?;
+            let is_visible = !element.is_offscreen()?;
+            
+            // Get children
+            let mut children = Vec::new();
+            if let Ok(child_elements) = element.get_children() {
+                for child in child_elements {
+                    if let Some(child_windows_element) = child.as_any().downcast_ref::<super::element::WindowsElement>() {
+                        if let Ok(child_node) = build_tree_node(child_windows_element) {
+                            children.push(child_node);
+                        }
+                    }
+                }
+            }
+            
+            Ok(UITreeNode {
+                name,
+                control_type,
+                properties,
+                children,
+                bounds,
+                is_enabled,
+                is_visible,
+            })
+        }
+        
+        // Build the root node
+        let root_node = build_tree_node(&root_windows_element)?;
+        
+        Ok(UITree {
+            root: root_node,
+            timestamp: Utc::now(),
+            window_title: root_name,
+            window_class: root_class,
+        })
+    }
+
+    fn find_elements(&self, query: &UIQuery) -> Result<Vec<Box<dyn UIElement>>, Box<dyn Error>> {
+        debug!("Finding elements with query: {:?}", query);
+        
+        match query {
+            UIQuery::ByName(name) => {
+                let element = self.automation.find_element_by_name(name)?;
+                Ok(vec![self.automation.element_to_ui_element(element)])
+            },
+            UIQuery::ByType(control_type) => {
+                let element = self.automation.find_element_by_type(control_type)?;
+                Ok(vec![self.automation.element_to_ui_element(element)])
+            },
+            UIQuery::ByProperty(key, value) => {
+                let automation = self.automation.automation.lock()?;
+                // For property queries, we need to get all children and filter
+                let all_condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(ControlType::Custom as i32), None)?;
+                let children = self.element.find_all(TreeScope::Descendants, &all_condition)?;
+                let mut result = Vec::new();
+                for child in children {
+                    let windows_element = super::element::WindowsElement::new(child.clone(), None);
+                    if let Ok(properties) = windows_element.get_properties() {
+                        if properties.get(key) == Some(value) {
+                            result.push(Box::new(windows_element) as Box<dyn UIElement>);
+                        }
+                    }
+                }
+                Ok(result)
+            },
+            UIQuery::And(queries) => {
+                let mut results = Vec::new();
+                for query in queries {
+                    let elements = self.find_elements(query)?;
+                    if results.is_empty() {
+                        results = elements;
+                    } else {
+                        // Keep only elements that exist in both results
+                        results.retain(|e1| {
+                            elements.iter().any(|e2| {
+                                e1.get_name().ok() == e2.get_name().ok() &&
+                                e1.get_type().ok() == e2.get_type().ok()
+                            })
+                        });
+                    }
+                }
+                Ok(results)
+            },
+            UIQuery::Or(queries) => {
+                let mut results = Vec::new();
+                for query in queries {
+                    let elements = self.find_elements(query)?;
+                    results.extend(elements);
+                }
+                Ok(results)
+            },
+            UIQuery::Not(query) => {
+                let automation = self.automation.automation.lock()?;
+                let all_condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(ControlType::Custom as i32), None)?;
+                let children = self.element.find_all(TreeScope::Descendants, &all_condition)?;
+                let mut result = Vec::new();
+                for child in children {
+                    let windows_element = super::element::WindowsElement::new(child.clone(), None);
+                    if !query.matches(&windows_element)? {
+                        result.push(Box::new(windows_element) as Box<dyn UIElement>);
+                    }
+                }
+                Ok(result)
+            },
+            UIQuery::Child(query) => {
+                let automation = self.automation.automation.lock()?;
+                let all_condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(ControlType::Custom as i32), None)?;
+                let children = self.element.find_all(TreeScope::Children, &all_condition)?;
+                let mut result = Vec::new();
+                for child in children {
+                    let windows_element = super::element::WindowsElement::new(child.clone(), None);
+                    if query.matches(&windows_element)? {
+                        result.push(Box::new(windows_element) as Box<dyn UIElement>);
+                    }
+                }
+                Ok(result)
+            },
+            UIQuery::Descendant(query) => {
+                let automation = self.automation.automation.lock()?;
+                let all_condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(ControlType::Custom as i32), None)?;
+                let descendants = self.element.find_all(TreeScope::Descendants, &all_condition)?;
+                let mut result = Vec::new();
+                for descendant in descendants {
+                    let windows_element = super::element::WindowsElement::new(descendant.clone(), None);
+                    if query.matches(&windows_element)? {
+                        result.push(Box::new(windows_element) as Box<dyn UIElement>);
+                    }
+                }
+                Ok(result)
+            },
+            UIQuery::Parent(query) => {
+                let automation = self.automation.automation.lock()?;
+                let parent_condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(ControlType::Window as i32), None)?;
+                if let Ok(parent) = self.element.find_first(TreeScope::Parent, &parent_condition) {
+                    let windows_element = super::element::WindowsElement::new(parent.clone(), None);
+                    if query.matches(&windows_element)? {
+                        return Ok(vec![Box::new(windows_element) as Box<dyn UIElement>]);
+                    }
+                }
+                Ok(Vec::new())
+            },
+            UIQuery::Ancestor(query) => {
+                let automation = self.automation.automation.lock()?;
+                let ancestor_condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(ControlType::Window as i32), None)?;
+                let mut current = self.element.clone();
+                let mut result = Vec::new();
+                while let Ok(parent) = current.find_first(TreeScope::Parent, &ancestor_condition) {
+                    let windows_element = super::element::WindowsElement::new(parent.clone(), None);
+                    if query.matches(&windows_element)? {
+                        result.push(Box::new(windows_element) as Box<dyn UIElement>);
+                    }
+                    current = parent;
+                }
+                Ok(result)
+            },
+        }
     }
 } 

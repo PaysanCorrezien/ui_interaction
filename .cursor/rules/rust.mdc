@@ -1,0 +1,10 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+When you end your change, run a simple `cargo check` on the project to verify that there not a single error remaining.
+if there is `warning` fix them:  for exemple for unused add `#[allow(dead_code)]` before it, 
+for errors provide a fix so the program can compile.
+keep running `cargo check` verification until not any error/warning remain
+

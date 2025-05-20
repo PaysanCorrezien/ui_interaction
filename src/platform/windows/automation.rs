@@ -1,10 +1,11 @@
-use crate::core::{UIElement, Window, UIAutomation as CoreUIAutomation};
-use uiautomation::core::UIElement as UIAutomationElement;
-use uiautomation::types::{UIProperty, TreeScope};
-use uiautomation::controls::ControlType;
-use uiautomation::variants::Variant;
-use uiautomation::patterns::{UIValuePattern, UITextPattern};
 use std::error::Error;
+use std::sync::{Arc, Mutex};
+use log::{debug, info, warn};
+use uiautomation::UIElement as UIAutomationElement;
+use uiautomation::types::{TreeScope, UIProperty};
+use uiautomation::variants::Variant;
+use uiautomation::controls::ControlType;
+use uiautomation::patterns::{UIValuePattern, UITextPattern};
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
 use windows::Win32::Foundation::{HWND, RECT};
@@ -17,9 +18,10 @@ use windows::Win32::UI::WindowsAndMessaging::{
 use windows::Win32::System::ProcessStatus::GetModuleFileNameExW;
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 use windows::Win32::UI::HiDpi::GetDpiForWindow;
-use super::element::WindowsElement;
+
+use crate::core::{Window, UIAutomation as CoreUIAutomation, UIElement as CoreUIElement};
 use super::window::WindowsWindow;
-use log::{debug, info, warn};
+use super::element::WindowsElement;
 
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -171,19 +173,46 @@ impl WindowInfo {
     }
 }
 
+// Thread-safe wrapper for our non-thread-safe types
+#[derive(Clone)]
+pub struct ThreadSafe<T>(Arc<Mutex<T>>);
+
+impl<T> ThreadSafe<T> {
+    pub fn new(value: T) -> Self {
+        Self(Arc::new(Mutex::new(value)))
+    }
+
+    pub fn lock(&self) -> Result<std::sync::MutexGuard<T>, Box<dyn Error>> {
+        self.0.lock().map_err(|_| "Failed to lock automation".into())
+    }
+}
+
+// Make ThreadSafe Send + Sync
+unsafe impl<T> Send for ThreadSafe<T> {}
+unsafe impl<T> Sync for ThreadSafe<T> {}
+
+thread_local! {
+    pub static AUTOMATION: std::cell::RefCell<Option<ThreadSafe<uiautomation::core::UIAutomation>>> = std::cell::RefCell::new(None);
+}
+
 /// Windows-specific UIAutomation implementation
 #[derive(Clone)]
 pub struct WindowsUIAutomation {
-    automation: uiautomation::core::UIAutomation,
+    pub automation: ThreadSafe<uiautomation::core::UIAutomation>,
 }
 
 impl WindowsUIAutomation {
     /// Create a new instance of WindowsUIAutomation
     pub fn new() -> Result<Self, Box<dyn Error>> {
-        debug!("Initializing WindowsUIAutomation instance");
+        let automation = uiautomation::UIAutomation::new()?;
         Ok(WindowsUIAutomation {
-            automation: uiautomation::core::UIAutomation::new()?,
+            automation: ThreadSafe::new(automation),
         })
+    }
+
+    /// Convert a UIAutomationElement to a Box<dyn UIElement>
+    pub fn element_to_ui_element(&self, element: UIAutomationElement) -> Box<dyn CoreUIElement> {
+        Box::new(WindowsElement::new(element, None)) as Box<dyn CoreUIElement>
     }
 
     /// Get the currently focused window
@@ -195,46 +224,28 @@ impl WindowsUIAutomation {
         info!("Focused window - Title: {}, ClassName: {}", 
             window_info.title, window_info.class_name);
         
-        self.automation.get_focused_element().map_err(|e| e.into())
+        let automation = self.automation.lock()?;
+        automation.get_focused_element().map_err(|e| e.into())
     }
 
     /// Get the currently focused element with its details
     pub fn get_focused_element_details(&self) -> Result<(UIAutomationElement, String, String), Box<dyn Error>> {
-        debug!("Getting currently focused element details");
-        let element = self.automation.get_focused_element()?;
-        
-        let name: Variant = element.get_property_value(UIProperty::Name)?;
-        let control_type: Variant = element.get_property_value(UIProperty::ControlType)?;
-        let control_type_id: i32 = control_type.try_into()?;
-        let control_type_enum = ControlType::try_from(control_type_id).unwrap_or(ControlType::Custom);
-
-        info!(
-            "Found focused element: Name: {}, Type: {:?}",
-            name.get_string()?,
-            control_type_enum
-        );
-
-        Ok((element, name.get_string()?, format!("{:?}", control_type_enum)))
+        debug!("Getting focused element details");
+        let automation = self.automation.lock()?;
+        let element = automation.get_focused_element()?;
+        let name = element.get_name()?;
+        let class_name = element.get_classname()?;
+        Ok((element, name, class_name))
     }
 
     /// Get the currently focused input element
     pub fn get_focused_input_element(&self) -> Result<UIAutomationElement, Box<dyn Error>> {
         debug!("Getting currently focused input element");
-        
-        let focused_element = self.automation.get_focused_element()?;
+        let automation = self.automation.lock()?;
+        let focused_element = automation.get_focused_element()?;
         
         let control_type: Variant = focused_element.get_property_value(UIProperty::ControlType)?;
         let control_type_id: i32 = control_type.try_into()?;
-        
-        let name: Variant = focused_element.get_property_value(UIProperty::Name)?;
-        let class_name = focused_element.get_classname()?;
-        debug!(
-            "Focused element details - Name: {}, Type: {:?}, ClassName: {}",
-            name.get_string()?,
-            ControlType::try_from(control_type_id).unwrap_or(ControlType::Custom),
-            class_name
-        );
-        
         let is_input = match ControlType::try_from(control_type_id).unwrap_or(ControlType::Custom) {
             ControlType::Edit => true,
             ControlType::ComboBox => true,
@@ -265,8 +276,9 @@ impl WindowsUIAutomation {
     /// Find an element by its name
     pub fn find_element_by_name(&self, name: &str) -> Result<UIAutomationElement, Box<dyn Error>> {
         debug!("Finding element by name: {}", name);
-        let root = self.automation.get_root_element()?;
-        let condition = self.automation.create_property_condition(UIProperty::Name, Variant::from(name), None)?;
+        let automation = self.automation.lock()?;
+        let root = automation.get_root_element()?;
+        let condition = automation.create_property_condition(UIProperty::Name, Variant::from(name), None)?;
         root.find_first(TreeScope::Descendants, &condition)
             .map_err(|e| e.into())
     }
@@ -274,77 +286,9 @@ impl WindowsUIAutomation {
     /// Find an element by its type
     pub fn find_element_by_type(&self, element_type: &str) -> Result<UIAutomationElement, Box<dyn Error>> {
         debug!("Finding element by type: {}", element_type);
-        
-        // First check if the focused element matches the requested type
-        if let Ok(focused_element) = self.automation.get_focused_element() {
-            let control_type: Variant = focused_element.get_property_value(UIProperty::ControlType)?;
-            let control_type_id: i32 = control_type.try_into()?;
-            let focused_type = ControlType::try_from(control_type_id).unwrap_or(ControlType::Custom);
-            
-            let requested_type = match element_type.to_lowercase().as_str() {
-                "button" => ControlType::Button,
-                "edit" => ControlType::Edit,
-                "text" => ControlType::Text,
-                "checkbox" => ControlType::CheckBox,
-                "combobox" => ControlType::ComboBox,
-                "list" => ControlType::List,
-                "listitem" => ControlType::ListItem,
-                "menu" => ControlType::Menu,
-                "menuitem" => ControlType::MenuItem,
-                "pane" => ControlType::Pane,
-                "radiobutton" => ControlType::RadioButton,
-                "scrollbar" => ControlType::ScrollBar,
-                "slider" => ControlType::Slider,
-                "spinner" => ControlType::Spinner,
-                "statusbar" => ControlType::StatusBar,
-                "tab" => ControlType::Tab,
-                "tabitem" => ControlType::TabItem,
-                "toolbar" => ControlType::ToolBar,
-                "tooltip" => ControlType::ToolTip,
-                "tree" => ControlType::Tree,
-                "treeitem" => ControlType::TreeItem,
-                "window" => ControlType::Window,
-                _ => return Err("Unsupported element type".into()),
-            };
-            
-            if focused_type == requested_type {
-                debug!("Using focused element as it matches requested type: {:?}", focused_type);
-                return Ok(focused_element);
-            }
-        }
-        
-        // If focused element doesn't match, search the entire tree
-        let root = self.automation.get_root_element()?;
-        let condition = self.automation.create_property_condition(
-            UIProperty::ControlType, 
-            Variant::from(match element_type.to_lowercase().as_str() {
-                "button" => ControlType::Button,
-                "edit" => ControlType::Edit,
-                "text" => ControlType::Text,
-                "checkbox" => ControlType::CheckBox,
-                "combobox" => ControlType::ComboBox,
-                "list" => ControlType::List,
-                "listitem" => ControlType::ListItem,
-                "menu" => ControlType::Menu,
-                "menuitem" => ControlType::MenuItem,
-                "pane" => ControlType::Pane,
-                "radiobutton" => ControlType::RadioButton,
-                "scrollbar" => ControlType::ScrollBar,
-                "slider" => ControlType::Slider,
-                "spinner" => ControlType::Spinner,
-                "statusbar" => ControlType::StatusBar,
-                "tab" => ControlType::Tab,
-                "tabitem" => ControlType::TabItem,
-                "toolbar" => ControlType::ToolBar,
-                "tooltip" => ControlType::ToolTip,
-                "tree" => ControlType::Tree,
-                "treeitem" => ControlType::TreeItem,
-                "window" => ControlType::Window,
-                _ => return Err("Unsupported element type".into()),
-            } as i32), 
-            None
-        )?;
-        
+        let automation = self.automation.lock()?;
+        let root = automation.get_root_element()?;
+        let condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(element_type), None)?;
         root.find_first(TreeScope::Descendants, &condition)
             .map_err(|e| e.into())
     }
@@ -353,21 +297,25 @@ impl WindowsUIAutomation {
 impl CoreUIAutomation for WindowsUIAutomation {
     fn get_focused_window(&self) -> Result<Box<dyn Window>, Box<dyn Error>> {
         let element = self.get_focused_window()?;
-        Ok(Box::new(WindowsWindow::new(element, Box::new(self.clone()))?))
+        Ok(Box::new(WindowsWindow::new(element, Arc::new(self.clone()))?))
     }
 
-    fn get_focused_element(&self) -> Result<Box<dyn UIElement>, Box<dyn Error>> {
-        let (element, _, _) = self.get_focused_element_details()?;
-        Ok(Box::new(WindowsElement::new(element)))
+    fn get_focused_element(&self) -> Result<Box<dyn CoreUIElement>, Box<dyn Error>> {
+        let element = self.automation.lock()?.get_focused_element()?;
+        Ok(self.element_to_ui_element(element))
     }
 
-    fn find_element_by_name(&self, name: &str) -> Result<Box<dyn UIElement>, Box<dyn Error>> {
-        let element = self.find_element_by_name(name)?;
-        Ok(Box::new(WindowsElement::new(element)))
+    fn find_element_by_name(&self, name: &str) -> Result<Box<dyn CoreUIElement>, Box<dyn Error>> {
+        let automation = self.automation.lock()?;
+        let condition = automation.create_property_condition(UIProperty::Name, Variant::from(name), None)?;
+        let element = automation.get_root_element()?.find_first(TreeScope::Descendants, &condition)?;
+        Ok(self.element_to_ui_element(element))
     }
 
-    fn find_element_by_type(&self, element_type: &str) -> Result<Box<dyn UIElement>, Box<dyn Error>> {
-        let element = self.find_element_by_type(element_type)?;
-        Ok(Box::new(WindowsElement::new(element)))
+    fn find_element_by_type(&self, element_type: &str) -> Result<Box<dyn CoreUIElement>, Box<dyn Error>> {
+        let automation = self.automation.lock()?;
+        let condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(element_type), None)?;
+        let element = automation.get_root_element()?.find_first(TreeScope::Descendants, &condition)?;
+        Ok(self.element_to_ui_element(element))
     }
 } 

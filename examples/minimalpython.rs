@@ -1,6 +1,6 @@
 use anyhow::Result;
 use pyo3::prelude::*;
-use pyo3::types::PyDict;
+use pyo3::types::{PyDict, PyModule};
 
 mod python_bindings {
     include!("../src/python_bindings.rs");
@@ -15,6 +15,16 @@ fn run_python_code(code: &str) -> Result<String> {
         // Create and inject the automation object
         let automation = Py::new(py, python_bindings::PyAutomation::new()?)?;
         globals.set_item("automation", automation)?;
+
+        // Register the uia_interaction module
+        let module = PyModule::new_bound(py, "uia_interaction")?;
+        module.add_class::<python_bindings::PyAutomation>()?;
+        module.add_class::<python_bindings::PyWindow>()?;
+        module.add_class::<python_bindings::PyUIElement>()?;
+        module.add_class::<python_bindings::PyUITree>()?;
+        module.add_class::<python_bindings::PyUITreeNode>()?;
+        module.add_class::<python_bindings::PyUIQuery>()?;
+        py.import_bound("sys")?.getattr("modules")?.set_item("uia_interaction", module)?;
 
         // Run the Python code
         py.run_bound(code, Some(&globals), None)?;
@@ -31,23 +41,49 @@ fn main() -> Result<()> {
 
     // Example Python code that interacts with UI and returns data
     let python_code = r#"
+# Direct usage of automation object
 def collect_ui_info():
     # Get the focused window
     window = automation.focused_window()
-    title = window.title
     
-    # Get the focused element
-    element = window.focused_element()
-    element_info = {}
-    if element:
-        element_info = {
-            "name": element.name,
-            "type": element.control_type
-        }
+    # Get the complete UI tree
+    tree = window.get_ui_tree()
+    
+    # Print the tree structure
+    def print_tree(node, indent=0):
+        print(f"{' ' * indent}{node.name} ({node.control_type})")
+        for child in node.children:
+            print_tree(child, indent + 2)
+    
+    print("UI Tree Structure:")
+    print_tree(tree.root)
+    
+    # Create query objects properly using PyUIQuery
+    from uia_interaction import PyUIQuery
+    
+    # Create individual queries
+    button_type_query = PyUIQuery.by_type("Button")
+    
+    # Find all buttons first
+    buttons = window.find_elements(button_type_query)
+    
+    # Filter enabled buttons
+    enabled_buttons = [button for button in buttons if button.is_enabled]
+    
+    # Collect information about found buttons
+    button_info = []
+    for button in enabled_buttons:
+        button_info.append({
+            "name": button.name,
+            "type": button.control_type,
+            "properties": button.get_properties()
+        })
     
     return {
-        "window_title": title,
-        "focused_element": element_info
+        "window_title": tree.window_title,
+        "window_class": tree.window_class,
+        "timestamp": tree.timestamp,
+        "buttons": button_info
     }
 
 # Collect UI information and store it in the globals
