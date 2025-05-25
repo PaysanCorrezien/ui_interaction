@@ -1,7 +1,8 @@
 use crate::core::UIElement as CoreUIElement;
 use uiautomation::core::UIElement as UIAutomationElement;
-use uiautomation::patterns::{UIValuePattern, UITextPattern, UILegacyIAccessiblePattern};
+use uiautomation::patterns::{UIValuePattern, UITextPattern};
 use uiautomation::types::{TreeScope, UIProperty};
+use uiautomation::variants::Variant;
 use uiautomation::controls::ControlType;
 use uiautomation::UITreeWalker;
 use windows::Win32::Foundation::RECT;
@@ -73,11 +74,23 @@ impl WindowsElement {
 
 impl CoreUIElement for WindowsElement {
     fn get_name(&self) -> Result<String, Box<dyn Error>> {
-        Ok(self.element.get_name()?)
+        debug!("WindowsElement::get_name - Getting name");
+        match self.element.get_name() {
+            Ok(name) => {
+                debug!("WindowsElement::get_name - Success: {}", name);
+                Ok(name)
+            },
+            Err(e) => {
+                warn!("WindowsElement::get_name - Error: {}", e);
+                Err(e.into())
+            }
+        }
     }
 
     fn get_type(&self) -> Result<String, Box<dyn Error>> {
+        debug!("WindowsElement::get_type - Getting control type");
         let control_type = self.get_control_type()?;
+        debug!("WindowsElement::get_type - Success: {}", control_type);
         Ok(control_type.to_string())
     }
 
@@ -264,38 +277,83 @@ impl CoreUIElement for WindowsElement {
         Ok(())
     }
 
+    fn click(&self) -> Result<(), Box<dyn Error>> {
+        // Try to get the element's bounds for clicking
+        if let Ok(Some(bounds)) = self.get_bounds() {
+            // Calculate center point
+            let _center_x = (bounds.left + bounds.right) / 2;
+            let _center_y = (bounds.top + bounds.bottom) / 2;
+            
+            // Use the UIA click method
+            if let Err(e) = self.element.click() {
+                // Fallback: Try using invoke pattern if available
+                use uiautomation::patterns::UIInvokePattern;
+                if let Ok(invoke_pattern) = self.element.get_pattern::<UIInvokePattern>() {
+                    if let Err(e) = invoke_pattern.invoke() {
+                        return Err(format!("Failed to click element: {}", e).into());
+                    } else {
+                        return Ok(());
+                    }
+                } else {
+                    return Err(format!("Failed to click element: {}", e).into());
+                }
+            } else {
+                return Ok(());
+            }
+        } else {
+            // Try invoke pattern as fallback
+            use uiautomation::patterns::UIInvokePattern;
+            if let Ok(invoke_pattern) = self.element.get_pattern::<UIInvokePattern>() {
+                if let Err(e) = invoke_pattern.invoke() {
+                    return Err(format!("Failed to click element: {}", e).into());
+                } else {
+                    return Ok(());
+                }
+            } else {
+                return Err("Failed to click element: no bounds and no invoke pattern available".into());
+            }
+        }
+    }
+
     fn is_enabled(&self) -> Result<bool, Box<dyn Error>> {
-        Ok(self.element.is_enabled()?)
+        match self.element.is_enabled() {
+            Ok(enabled) => Ok(enabled),
+            Err(e) => Err(e.into())
+        }
     }
 
     fn get_properties(&self) -> Result<HashMap<String, String>, Box<dyn Error>> {
         let mut properties = HashMap::new();
         
-        // Get basic properties
+        // Get only essential properties for performance
         if let Ok(name) = self.element.get_name() {
             properties.insert("name".to_string(), name);
         }
+        if let Ok(class_name) = self.element.get_classname() {
+            properties.insert("class_name".to_string(), class_name);
+        }
         
-        // Get control type properly
-        if let Ok(control_type_id) = self.get_control_type_variant() {
-            if let Ok(control_type) = ControlType::try_from(control_type_id) {
-                properties.insert("control_type".to_string(), control_type.to_string());
+        // Get control type efficiently
+        if let Ok(variant) = self.element.get_property_value(UIProperty::ControlType) {
+            if let Ok(control_type_id) = <Variant as TryInto<i32>>::try_into(variant) {
+                if let Ok(control_type) = ControlType::try_from(control_type_id) {
+                    properties.insert("control_type".to_string(), control_type.to_string());
+                }
             }
         }
         
-        // Get enabled state
-        if let Ok(variant) = self.element.get_property_value(UIProperty::IsEnabled) {
-            let enabled: bool = variant.try_into().unwrap_or(false);
+        // Get automation ID if available (useful for finding elements)
+        if let Ok(variant) = self.element.get_property_value(UIProperty::AutomationId) {
+            let automation_id = variant.to_string();
+            if !automation_id.is_empty() && automation_id != "null" {
+                properties.insert("automation_id".to_string(), automation_id);
+            }
+        }
+        
+        // Get enabled state efficiently
+        if let Ok(enabled) = self.element.is_enabled() {
             properties.insert("enabled".to_string(), enabled.to_string());
         }
-        
-        // Get keyboard focusable state
-        if let Ok(variant) = self.element.get_property_value(UIProperty::IsKeyboardFocusable) {
-            let focusable: bool = variant.try_into().unwrap_or(false);
-            properties.insert("keyboard_focusable".to_string(), focusable.to_string());
-        }
-        
-        // Add more properties as needed
         
         Ok(properties)
     }

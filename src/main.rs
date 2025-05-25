@@ -50,11 +50,11 @@ fn demonstrate_ui_automation(automation: &dyn UIAutomation) -> Result<()> {
     info!("Waiting for 3 seconds to switch to your target window...");
     std::thread::sleep(std::time::Duration::from_secs(3));
 
-    // Get the focused window
-    let window = automation.get_focused_window()
-        .map_err(|e| anyhow::anyhow!("Failed to get focused window: {}", e))?;
+    // Get the active window
+    let window = automation.get_active_window()
+        .map_err(|e| anyhow::anyhow!("Failed to get active window: {}", e))?;
     
-    info!("\nFocused Window Information:");
+    info!("\nActive Window Information:");
     info!("Title: {}", window.get_title()
         .map_err(|e| anyhow::anyhow!("Failed to get window title: {}", e))?);
     info!("Class: {}", window.get_class_name()

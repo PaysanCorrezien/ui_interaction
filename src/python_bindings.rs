@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex};
 use ::uia_interaction::core::{UIAutomation, Window, UIElement, UITree, UITreeNode, UIQuery};
 use ::uia_interaction::factory::UIAutomationFactory;
 use std::collections::HashMap;
+use log::{debug, warn};
 
 // Thread-safe wrapper for our non-thread-safe types
 struct ThreadSafe<T>(Mutex<T>);
@@ -26,42 +27,85 @@ pub struct PyUIElement {
 impl PyUIElement {
     #[getter]
     fn name(&self) -> PyResult<String> {
+        debug!("Getting name for UI element");
         let inner = self.inner.0.lock().unwrap();
-        inner.get_name()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        match inner.get_name() {
+            Ok(name) => {
+                debug!("Successfully got name: {}", name);
+                Ok(name)
+            },
+            Err(e) => {
+                warn!("Failed to get name: {}", e);
+                Ok(String::new())
+            }
+        }
     }
 
     #[getter]
     fn control_type(&self) -> PyResult<String> {
+        debug!("Getting control type for UI element");
         let inner = self.inner.0.lock().unwrap();
-        inner.get_type()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        match inner.get_type() {
+            Ok(typ) => {
+                debug!("Successfully got control type: {}", typ);
+                Ok(typ)
+            },
+            Err(e) => {
+                warn!("Failed to get control type: {}", e);
+                Ok(String::new())
+            }
+        }
     }
 
     #[getter]
     fn is_enabled(&self) -> PyResult<bool> {
+        debug!("Getting enabled state for UI element");
         let inner = self.inner.0.lock().unwrap();
-        inner.is_enabled()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        match inner.is_enabled() {
+            Ok(val) => {
+                debug!("Successfully got enabled state: {}", val);
+                Ok(val)
+            },
+            Err(e) => {
+                warn!("Failed to get enabled state: {}", e);
+                Ok(false)
+            }
+        }
     }
 
     fn get_properties(&self) -> PyResult<HashMap<String, String>> {
+        debug!("Getting properties for UI element");
         let inner = self.inner.0.lock().unwrap();
-        inner.get_properties()
-            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+        match inner.get_properties() {
+            Ok(props) => {
+                debug!("Successfully got {} properties", props.len());
+                Ok(props)
+            },
+            Err(e) => {
+                warn!("Failed to get properties: {}", e);
+                Ok(HashMap::new())
+            }
+        }
     }
 
     fn get_children(&self) -> PyResult<Vec<Py<PyUIElement>>> {
+        debug!("Getting children for UI element");
         Python::with_gil(|py| {
             let inner = self.inner.0.lock().unwrap();
-            let children = inner.get_children()
-                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
-            
+            match inner.get_children() {
+                Ok(children) => {
+                    debug!("Successfully got {} children", children.len());
             Ok(children.into_iter()
                 .map(|element| Py::new(py, PyUIElement { 
                     inner: Arc::new(ThreadSafe::new(element))
                 }).unwrap())
                 .collect())
+                },
+                Err(e) => {
+                    warn!("Failed to get children: {}", e);
+                    Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+                }
+            }
         })
     }
 
@@ -69,6 +113,49 @@ impl PyUIElement {
         let inner = self.inner.0.lock().unwrap();
         inner.set_text(text)
             .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn append_text(&self, text: &str, position: &str) -> PyResult<()> {
+        use ::uia_interaction::core::AppendPosition;
+        let inner = self.inner.0.lock().unwrap();
+        let append_pos = match position {
+            "CurrentCursor" => AppendPosition::CurrentCursor,
+            "EndOfLine" => AppendPosition::EndOfLine,
+            "EndOfText" => AppendPosition::EndOfText,
+            _ => AppendPosition::EndOfText, // Default
+        };
+        inner.append_text(text, append_pos)
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn get_text(&self) -> PyResult<String> {
+        debug!("Getting text from UI element");
+        let inner = self.inner.0.lock().unwrap();
+        match inner.get_text() {
+            Ok(text) => {
+                debug!("Successfully got text: {}", text);
+                Ok(text)
+            },
+            Err(e) => {
+                warn!("Failed to get text: {}", e);
+                Ok(String::new())
+            }
+        }
+    }
+
+    fn click(&self) -> PyResult<()> {
+        debug!("Attempting to click UI element");
+        let inner = self.inner.0.lock().unwrap();
+        match inner.click() {
+            Ok(()) => {
+                debug!("Successfully clicked UI element");
+                Ok(())
+            },
+            Err(e) => {
+                warn!("Failed to click UI element: {}", e);
+                Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+            }
+        }
     }
 }
 
@@ -245,10 +332,47 @@ impl PyAutomation {
         })
     }
 
+    /// Get the currently active (foreground) window - the top-level application window
+    fn active_window(&self) -> PyResult<Py<PyWindow>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let window = inner.get_active_window()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            Ok(Py::new(py, PyWindow { 
+                inner: Arc::new(ThreadSafe::new(window))
+            })?)
+        })
+    }
+
+    /// Get the window that contains the currently focused element
+    fn window_containing_focus(&self) -> PyResult<Py<PyWindow>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let window = inner.get_window_containing_focus()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            Ok(Py::new(py, PyWindow { 
+                inner: Arc::new(ThreadSafe::new(window))
+            })?)
+        })
+    }
+
+    /// Get the currently focused element (the element with keyboard focus)
+    fn focused_element(&self) -> PyResult<Py<PyUIElement>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let element = inner.get_focused_element()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            Ok(Py::new(py, PyUIElement { 
+                inner: Arc::new(ThreadSafe::new(element))
+            })?)
+        })
+    }
+
+    /// DEPRECATED: Use active_window() instead
     fn focused_window(&self) -> PyResult<Py<PyWindow>> {
         Python::with_gil(|py| {
             let inner = self.inner.0.lock().unwrap();
-            let window = inner.get_focused_window()
+            let window = inner.get_active_window()
                 .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
             Ok(Py::new(py, PyWindow { 
                 inner: Arc::new(ThreadSafe::new(window))

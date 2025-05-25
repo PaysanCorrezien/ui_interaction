@@ -26,3 +26,7 @@ serde = { version = "1.0", features = ["derive"] }
 [[example]]
 name = "main"
 path = "examples/main.rs"
+
+[[example]]
+name = "notepad_scoped_demo"
+path = "examples/notepad_scoped_demo.rs"

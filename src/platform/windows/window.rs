@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::ffi::OsString;
 use std::os::windows::ffi::OsStringExt;
-use chrono::Utc;
+// use chrono::Utc;
 use log::debug;
 use std::convert::TryInto;
 
@@ -345,19 +345,22 @@ impl Window for WindowsWindow {
 
     fn get_ui_tree(&self) -> Result<UITree, Box<dyn Error>> {
         let root_element = self.element.clone();
-        let root_name = root_element.get_name()?;
-        let root_class = root_element.get_classname()?;
+        let root_name = root_element.get_name().unwrap_or_default();
+        let root_class = root_element.get_classname().unwrap_or_default();
         
-        // Create properties map
+        // Create basic properties map without expensive operations
         let mut properties = HashMap::new();
         properties.insert("name".to_string(), root_name.clone());
         properties.insert("class_name".to_string(), root_class.clone());
         
-        // Get control type properly
+        // Get control type efficiently
         let control_type = if let Ok(variant) = root_element.get_property_value(UIProperty::ControlType) {
-            let control_type_id: i32 = variant.try_into()?;
-            if let Ok(control_type) = ControlType::try_from(control_type_id) {
-                control_type.to_string()
+            if let Ok(control_type_id) = <Variant as TryInto<i32>>::try_into(variant) {
+                if let Ok(control_type) = ControlType::try_from(control_type_id) {
+                    control_type.to_string()
+                } else {
+                    "Unknown".to_string()
+                }
             } else {
                 "Unknown".to_string()
             }
@@ -367,34 +370,17 @@ impl Window for WindowsWindow {
         
         properties.insert("control_type".to_string(), control_type.clone());
         
-        // Get enabled state
-        let is_enabled = if let Ok(variant) = root_element.get_property_value(UIProperty::IsEnabled) {
-            let enabled: bool = variant.try_into().unwrap_or(false);
-            enabled
-        } else {
-            false
-        };
-        properties.insert("enabled".to_string(), is_enabled.to_string());
-        
-        // Get keyboard focusable state
-        let is_keyboard_focusable = if let Ok(variant) = root_element.get_property_value(UIProperty::IsKeyboardFocusable) {
-            let focusable: bool = variant.try_into().unwrap_or(false);
-            focusable
-        } else {
-            false
-        };
-        properties.insert("keyboard_focusable".to_string(), is_keyboard_focusable.to_string());
-        
-        // Create a tree walker for traversing the UI tree
+        // Create automation and walker once
         let automation = self.automation.automation.lock()?;
         let walker = automation.create_tree_walker()?;
         
-        // Create a WindowsElement wrapper for the root with the tree walker
+        // Create root element wrapper
         let root_windows_element = super::element::WindowsElement::new(root_element.clone(), Some(walker));
         
-        // Recursively build the tree
-        fn build_tree_node(element: &super::element::WindowsElement) -> Result<UITreeNode, Box<dyn Error>> {
-            let name = element.get_name()?;
+        // Build tree with depth limit for performance
+        fn build_tree_node(element: &super::element::WindowsElement, depth: usize, max_depth: usize) -> Result<UITreeNode, Box<dyn Error>> {
+            let name = element.get_name().unwrap_or_default();
+            
             let control_type = if let Ok(variant) = element.get_control_type_variant() {
                 if let Ok(control_type) = ControlType::try_from(variant) {
                     control_type.to_string()
@@ -405,18 +391,26 @@ impl Window for WindowsWindow {
                 "Unknown".to_string()
             };
             
-            let properties = element.get_properties()?;
-            let bounds = element.get_bounds()?;
-            let is_enabled = element.is_enabled()?;
-            let is_visible = !element.is_offscreen()?;
+            // Only get essential properties, skip expensive ones for performance
+            let mut properties = HashMap::new();
+            properties.insert("name".to_string(), name.clone());
+            properties.insert("control_type".to_string(), control_type.clone());
             
-            // Get children
+            let bounds = element.get_bounds().ok().flatten();
+            let is_enabled = element.is_enabled().unwrap_or(false);
+            let is_visible = !element.is_offscreen().unwrap_or(true);
+            
+            // Limit tree depth to avoid performance issues
             let mut children = Vec::new();
-            if let Ok(child_elements) = element.get_children() {
-                for child in child_elements {
-                    if let Some(child_windows_element) = child.as_any().downcast_ref::<super::element::WindowsElement>() {
-                        if let Ok(child_node) = build_tree_node(child_windows_element) {
-                            children.push(child_node);
+            if depth < max_depth {
+                if let Ok(child_elements) = element.get_children() {
+                    // Limit number of children processed to avoid slowdown
+                    let max_children = if depth == 0 { 50 } else { 20 };
+                    for child in child_elements.into_iter().take(max_children) {
+                        if let Some(child_windows_element) = child.as_any().downcast_ref::<super::element::WindowsElement>() {
+                            if let Ok(child_node) = build_tree_node(child_windows_element, depth + 1, max_depth) {
+                                children.push(child_node);
+                            }
                         }
                     }
                 }
@@ -433,28 +427,70 @@ impl Window for WindowsWindow {
             })
         }
         
-        // Build the root node
-        let root_node = build_tree_node(&root_windows_element)?;
+        // Build tree with reasonable depth limit (3 levels should be enough for most cases)
+        let root_node = build_tree_node(&root_windows_element, 0, 3)?;
         
         Ok(UITree {
             root: root_node,
-            timestamp: Utc::now(),
+            timestamp: chrono::Utc::now(),
             window_title: root_name,
             window_class: root_class,
         })
     }
 
     fn find_elements(&self, query: &UIQuery) -> Result<Vec<Box<dyn UIElement>>, Box<dyn Error>> {
-        debug!("Finding elements with query: {:?}", query);
-        
         match query {
             UIQuery::ByName(name) => {
-                let element = self.automation.find_element_by_name(name)?;
-                Ok(vec![self.automation.element_to_ui_element(element)])
+                let automation = self.automation.automation.lock()?;
+                let condition = automation.create_property_condition(UIProperty::Name, Variant::from(name), None)?;
+                // Search within THIS WINDOW's element tree, not from desktop root
+                let elements = self.element.find_all(TreeScope::Descendants, &condition)?;
+                let mut result = Vec::new();
+                for element in elements {
+                    result.push(Box::new(super::element::WindowsElement::new(element, None)) as Box<dyn UIElement>);
+                }
+                Ok(result)
             },
             UIQuery::ByType(control_type) => {
-                let element = self.automation.find_element_by_type(control_type)?;
-                Ok(vec![self.automation.element_to_ui_element(element)])
+                // Convert string type to ControlType enum (same logic as before)
+                let control_type_enum = match control_type.as_str() {
+                    "Button" => ControlType::Button,
+                    "Edit" => ControlType::Edit,
+                    "Text" => ControlType::Text,
+                    "ComboBox" => ControlType::ComboBox,
+                    "CheckBox" => ControlType::CheckBox,
+                    "RadioButton" => ControlType::RadioButton,
+                    "ListItem" => ControlType::ListItem,
+                    "List" => ControlType::List,
+                    "TreeItem" => ControlType::TreeItem,
+                    "Tree" => ControlType::Tree,
+                    "TabItem" => ControlType::TabItem,
+                    "Tab" => ControlType::Tab,
+                    "Table" => ControlType::Table,
+                    "Document" => ControlType::Document,
+                    "Pane" => ControlType::Pane,
+                    "Window" => ControlType::Window,
+                    "Group" => ControlType::Group,
+                    "Image" => ControlType::Image,
+                    "Hyperlink" => ControlType::Hyperlink,
+                    "Custom" => ControlType::Custom,
+                    "MenuBar" => ControlType::MenuBar,
+                    "MenuItem" => ControlType::MenuItem,
+                    "Menu" => ControlType::Menu,
+                    _ => ControlType::Custom,
+                };
+                
+                let control_type_id = control_type_enum as i32;
+                
+                let automation = self.automation.automation.lock()?;
+                let condition = automation.create_property_condition(UIProperty::ControlType, Variant::from(control_type_id), None)?;
+                // Search within THIS WINDOW's element tree, not from desktop root
+                let elements = self.element.find_all(TreeScope::Descendants, &condition)?;
+                let mut result = Vec::new();
+                for element in elements {
+                    result.push(Box::new(super::element::WindowsElement::new(element, None)) as Box<dyn UIElement>);
+                }
+                Ok(result)
             },
             UIQuery::ByProperty(key, value) => {
                 let automation = self.automation.automation.lock()?;

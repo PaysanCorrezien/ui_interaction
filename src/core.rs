@@ -6,7 +6,7 @@ use std::any::Any;
 
 /// Represents a rectangle in screen coordinates
 #[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Rect {
     pub left: i32,
     pub top: i32,
@@ -61,6 +61,9 @@ pub trait UIElement {
     
     /// Append text to the element's content
     fn append_text(&self, text: &str, position: AppendPosition) -> Result<(), Box<dyn Error>>;
+
+    /// Click the element
+    fn click(&self) -> Result<(), Box<dyn Error>>;
 
     /// Check if the element is enabled
     fn is_enabled(&self) -> Result<bool, Box<dyn Error>>;
@@ -215,13 +218,17 @@ impl UIQuery {
     }
 }
 
-/// Main interface for UI automation
+/// Main UI Automation interface
 #[allow(dead_code)]
 pub trait UIAutomation: Send + Sync {
-    /// Get the currently focused window
-    fn get_focused_window(&self) -> Result<Box<dyn Window>, Box<dyn Error>>;
+    /// Get the currently active (foreground) window - the top-level application window
+    fn get_active_window(&self) -> Result<Box<dyn Window>, Box<dyn Error>>;
     
-    /// Get the currently focused element
+    /// Get the window that contains the currently focused element
+    /// This might be the same as active_window, but could be a child window or dialog
+    fn get_window_containing_focus(&self) -> Result<Box<dyn Window>, Box<dyn Error>>;
+    
+    /// Get the currently focused element (the element with keyboard focus)
     fn get_focused_element(&self) -> Result<Box<dyn UIElement>, Box<dyn Error>>;
     
     /// Find an element by its name
@@ -229,4 +236,10 @@ pub trait UIAutomation: Send + Sync {
     
     /// Find an element by its type
     fn find_element_by_type(&self, element_type: &str) -> Result<Box<dyn UIElement>, Box<dyn Error>>;
+    
+    /// DEPRECATED: Use get_active_window() instead
+    #[deprecated(since = "0.1.0", note = "Use get_active_window() instead")]
+    fn get_focused_window(&self) -> Result<Box<dyn Window>, Box<dyn Error>> {
+        self.get_active_window()
+    }
 } 
