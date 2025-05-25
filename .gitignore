@@ -1,1 +1,11 @@
 /target
+
+uia_interaction/
+
+scripts/
+
+*.pyc
+
+*.pyo
+*.pyd
+uia_interaction*

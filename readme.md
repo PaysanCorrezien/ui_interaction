@@ -1,6 +1,8 @@
 # UIA Automation Library
 
-This library provides a Rust interface to the Windows UI Automation framework, allowing for programmatic interaction with UI elements. It includes functionality for text handling, element manipulation, and UI navigation.
+A basic helper library for automating applcations interactions.
+This library provides a Rust/Python interface to the Windows UI Automation framework, allowing for programmatic interaction with UI elements. It includes functionality for text handling, element manipulation, and UI navigation and process querying.
+It expose a hight level api, with a backend that is only implemented for windows as of now which is built on top of the `uia_interaction` crate.
 
 ## TODO
 
