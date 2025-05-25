@@ -30,3 +30,11 @@ path = "examples/main.rs"
 [[example]]
 name = "notepad_scoped_demo"
 path = "examples/notepad_scoped_demo.rs"
+
+[[example]]
+name = "list_applications_demo"
+path = "examples/list_applications_demo.rs"
+
+[[example]]
+name = "vesktop_demo"
+path = "examples/vesktop_demo.rs"

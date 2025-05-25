@@ -49,11 +49,22 @@ struct WindowInfo {
 }
 
 impl WindowInfo {
+    #[allow(dead_code)]
     fn get_current() -> Option<Self> {
         unsafe {
             let hwnd = GetForegroundWindow();
             if hwnd.is_invalid() {
                 debug!("GetForegroundWindow returned NULL handle");
+                return None;
+            }
+            Self::from_hwnd(hwnd)
+        }
+    }
+    
+    fn from_hwnd(hwnd: HWND) -> Option<Self> {
+        unsafe {
+            if hwnd.is_invalid() {
+                debug!("Invalid HWND provided");
                 return None;
             }
 
@@ -65,7 +76,7 @@ impl WindowInfo {
                     .to_string_lossy()
                     .into_owned()
             } else {
-                debug!("GetWindowTextW returned 0 length");
+                debug!("GetWindowTextW returned 0 length for HWND {:?}", hwnd);
                 String::new()
             };
 
@@ -77,7 +88,7 @@ impl WindowInfo {
                     .to_string_lossy()
                     .into_owned()
             } else {
-                debug!("GetClassNameW returned 0 length");
+                debug!("GetClassNameW returned 0 length for HWND {:?}", hwnd);
                 String::new()
             };
 
@@ -185,10 +196,17 @@ pub struct WindowsWindow {
 
 impl WindowsWindow {
     pub fn new(element: UIAutomationElement, automation: Arc<WindowsUIAutomation>) -> Result<Self, Box<dyn Error>> {
-        let window_info = WindowInfo::get_current();
+        // Try to get window info for this specific element's window handle
+        let window_info = if let Ok(hwnd) = element.get_native_window_handle() {
+            WindowInfo::from_hwnd(hwnd.into())
+        } else {
+            None
+        };
+        
         if window_info.is_none() {
-            debug!("Failed to get window info using Windows API, falling back to UIAutomation");
+            debug!("Failed to get window info for specific element, falling back to UIAutomation");
         }
+        
         Ok(WindowsWindow { 
             element, 
             automation,
@@ -599,5 +617,26 @@ impl Window for WindowsWindow {
                 Ok(result)
             },
         }
+    }
+
+    fn activate(&self) -> Result<(), Box<dyn Error>> {
+        // For now, provide a basic implementation that focuses the window using UIAutomation
+        debug!("Attempting to activate window using UIAutomation SetFocus");
+        self.element.set_focus()
+            .map_err(|e| format!("Failed to activate window: {}", e).into())
+    }
+
+    fn bring_to_top(&self) -> Result<(), Box<dyn Error>> {
+        // For now, use the same approach as activate
+        debug!("Attempting to bring window to top using UIAutomation SetFocus");
+        self.element.set_focus()
+            .map_err(|e| format!("Failed to bring window to top: {}", e).into())
+    }
+
+    fn set_foreground(&self) -> Result<(), Box<dyn Error>> {
+        // For now, use the same approach as activate
+        debug!("Attempting to set window as foreground using UIAutomation SetFocus");
+        self.element.set_focus()
+            .map_err(|e| format!("Failed to set window as foreground: {}", e).into())
     }
 } 

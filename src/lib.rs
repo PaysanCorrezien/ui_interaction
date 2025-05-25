@@ -8,12 +8,12 @@ pub mod core;
 pub mod platform;
 pub mod factory;
 
-pub use core::{UIAutomation, Window, UIElement};
-pub use factory::UIAutomationFactory;
+pub use core::{UIAutomation, Window, UIElement, ApplicationManager, ApplicationInfo};
+pub use factory::{UIAutomationFactory, ApplicationManagerFactory};
 
 // Re-export platform-specific types for advanced usage
 #[cfg(target_os = "windows")]
-pub use platform::windows::{WindowsUIAutomation, WindowsWindow, WindowsElement};
+pub use platform::windows::{WindowsUIAutomation, WindowsWindow, WindowsElement, WindowsApplicationManager};
 
 #[cfg(target_os = "linux")]
 pub use platform::linux::{LinuxUIAutomation, LinuxWindow, LinuxUIElement};

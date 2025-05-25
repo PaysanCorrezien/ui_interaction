@@ -113,6 +113,15 @@ pub trait Window {
     /// Get the window's DPI
     fn get_dpi(&self) -> Result<u32, Box<dyn Error>>;
     
+    /// Bring the window to the foreground and give it focus
+    fn activate(&self) -> Result<(), Box<dyn Error>>;
+    
+    /// Bring the window to the top of the Z-order
+    fn bring_to_top(&self) -> Result<(), Box<dyn Error>>;
+    
+    /// Set the window as the foreground window
+    fn set_foreground(&self) -> Result<(), Box<dyn Error>>;
+    
     /// Get the currently focused element in this window
     fn get_focused_element(&self) -> Result<Box<dyn UIElement>, Box<dyn Error>>;
 
@@ -242,4 +251,35 @@ pub trait UIAutomation: Send + Sync {
     fn get_focused_window(&self) -> Result<Box<dyn Window>, Box<dyn Error>> {
         self.get_active_window()
     }
+}
+
+/// Represents an application running on the system
+#[allow(dead_code)]
+#[derive(Clone, Debug)]
+pub struct ApplicationInfo {
+    pub process_id: u32,
+    pub process_name: String,
+    pub process_path: String,
+    pub main_window_title: String,
+    pub main_window_class: String,
+    pub is_visible: bool,
+}
+
+/// Trait for managing applications running on the system
+#[allow(dead_code)]
+pub trait ApplicationManager: Send + Sync {
+    /// Get all running applications
+    fn get_all_applications(&self) -> Result<Vec<ApplicationInfo>, Box<dyn Error>>;
+    
+    /// Find applications by process name (e.g., "notepad.exe")
+    fn find_applications_by_name(&self, name: &str) -> Result<Vec<ApplicationInfo>, Box<dyn Error>>;
+    
+    /// Find applications by window title (partial match)
+    fn find_applications_by_title(&self, title: &str) -> Result<Vec<ApplicationInfo>, Box<dyn Error>>;
+    
+    /// Get a window from an application by process ID
+    fn get_window_by_process_id(&self, process_id: u32) -> Result<Box<dyn Window>, Box<dyn Error>>;
+    
+    /// Get the main window of an application by process name
+    fn get_window_by_process_name(&self, name: &str) -> Result<Box<dyn Window>, Box<dyn Error>>;
 } 

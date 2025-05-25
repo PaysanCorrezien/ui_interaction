@@ -1,7 +1,7 @@
 use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
-use ::uia_interaction::core::{UIAutomation, Window, UIElement, UITree, UITreeNode, UIQuery};
-use ::uia_interaction::factory::UIAutomationFactory;
+use ::uia_interaction::core::{UIAutomation, Window, UIElement, UITree, UITreeNode, UIQuery, ApplicationManager, ApplicationInfo};
+use ::uia_interaction::factory::{UIAutomationFactory, ApplicationManagerFactory};
 use std::collections::HashMap;
 use log::{debug, warn};
 
@@ -314,6 +314,24 @@ impl PyWindow {
                 .collect())
         })
     }
+
+    fn activate(&self) -> PyResult<()> {
+        let inner = self.inner.0.lock().unwrap();
+        inner.activate()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn bring_to_top(&self) -> PyResult<()> {
+        let inner = self.inner.0.lock().unwrap();
+        inner.bring_to_top()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
+
+    fn set_foreground(&self) -> PyResult<()> {
+        let inner = self.inner.0.lock().unwrap();
+        inner.set_foreground()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))
+    }
 }
 
 #[pyclass]
@@ -381,6 +399,135 @@ impl PyAutomation {
     }
 }
 
+#[pyclass]
+pub struct PyApplicationInfo {
+    inner: ApplicationInfo
+}
+
+#[pymethods]
+impl PyApplicationInfo {
+    #[getter]
+    fn process_id(&self) -> u32 {
+        self.inner.process_id
+    }
+
+    #[getter]
+    fn process_name(&self) -> String {
+        self.inner.process_name.clone()
+    }
+
+    #[getter]
+    fn process_path(&self) -> String {
+        self.inner.process_path.clone()
+    }
+
+    #[getter]
+    fn main_window_title(&self) -> String {
+        self.inner.main_window_title.clone()
+    }
+
+    #[getter]
+    fn main_window_class(&self) -> String {
+        self.inner.main_window_class.clone()
+    }
+
+    #[getter]
+    fn is_visible(&self) -> bool {
+        self.inner.is_visible
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "ApplicationInfo(process_id={}, process_name='{}', main_window_title='{}')",
+            self.inner.process_id,
+            self.inner.process_name,
+            self.inner.main_window_title
+        )
+    }
+}
+
+#[pyclass]
+pub struct PyApplicationManager {
+    inner: Arc<ThreadSafe<Box<dyn ApplicationManager>>>
+}
+
+#[pymethods]
+impl PyApplicationManager {
+    #[new]
+    pub fn new() -> PyResult<Self> {
+        let manager = ApplicationManagerFactory::new()
+            .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+        Ok(Self { 
+            inner: Arc::new(ThreadSafe::new(manager))
+        })
+    }
+
+    /// Get all running applications
+    fn get_all_applications(&self) -> PyResult<Vec<Py<PyApplicationInfo>>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let apps = inner.get_all_applications()
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+            Ok(apps.into_iter()
+                .map(|app| Py::new(py, PyApplicationInfo { inner: app }).unwrap())
+                .collect())
+        })
+    }
+
+    /// Find applications by process name (e.g., "notepad.exe")
+    fn find_applications_by_name(&self, name: &str) -> PyResult<Vec<Py<PyApplicationInfo>>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let apps = inner.find_applications_by_name(name)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+            Ok(apps.into_iter()
+                .map(|app| Py::new(py, PyApplicationInfo { inner: app }).unwrap())
+                .collect())
+        })
+    }
+
+    /// Find applications by window title (partial match)
+    fn find_applications_by_title(&self, title: &str) -> PyResult<Vec<Py<PyApplicationInfo>>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let apps = inner.find_applications_by_title(title)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+            Ok(apps.into_iter()
+                .map(|app| Py::new(py, PyApplicationInfo { inner: app }).unwrap())
+                .collect())
+        })
+    }
+
+    /// Get a window from an application by process ID
+    fn get_window_by_process_id(&self, process_id: u32) -> PyResult<Py<PyWindow>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let window = inner.get_window_by_process_id(process_id)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+            Ok(Py::new(py, PyWindow { 
+                inner: Arc::new(ThreadSafe::new(window))
+            })?)
+        })
+    }
+
+    /// Get the main window of an application by process name
+    fn get_window_by_process_name(&self, name: &str) -> PyResult<Py<PyWindow>> {
+        Python::with_gil(|py| {
+            let inner = self.inner.0.lock().unwrap();
+            let window = inner.get_window_by_process_name(name)
+                .map_err(|e| PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(e.to_string()))?;
+            
+            Ok(Py::new(py, PyWindow { 
+                inner: Arc::new(ThreadSafe::new(window))
+            })?)
+        })
+    }
+}
+
 #[pymodule]
 pub fn uia_interaction(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyAutomation>()?;
@@ -389,5 +536,7 @@ pub fn uia_interaction(_py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()>
     m.add_class::<PyUITree>()?;
     m.add_class::<PyUITreeNode>()?;
     m.add_class::<PyUIQuery>()?;
+    m.add_class::<PyApplicationInfo>()?;
+    m.add_class::<PyApplicationManager>()?;
     Ok(())
 } 
