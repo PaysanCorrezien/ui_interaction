@@ -2,8 +2,8 @@ use log::{ info, warn};
 use std::{thread, time::Duration};
 
 // Import our library modules
-use uia_interaction::UIAutomationFactory;
-use uia_interaction::core::{UIAutomation, UIQuery, UITree, AppendPosition};
+use ui_interaction::UIAutomationFactory;
+use ui_interaction::core::{UIAutomation, UIQuery, UITree, AppendPosition};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialize the logger with info level

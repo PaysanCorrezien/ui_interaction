@@ -1,5 +1,5 @@
 [package]
-name = "uia_interaction"
+name = "ui_interaction"
 version = "0.1.0"
 edition = "2021"
 description = "A high-level interface to interact with UI elements of applications"

@@ -1,12 +1,12 @@
-extern crate uia_interaction;
+extern crate ui_interaction;
 
 mod python_bindings;
 mod script_runner;
 
 use anyhow::Result;
 use log::{info, error};
-use uia_interaction::core::{UIAutomation, UIQuery, UITree, AppendPosition};
-use uia_interaction::UIAutomationFactory;
+use ui_interaction::core::{UIAutomation, UIQuery, UITree, AppendPosition};
+use ui_interaction::UIAutomationFactory;
 
 // Function to display UI tree in a formatted way
 fn display_ui_tree(tree: &UITree, indent: usize) {
@@ -16,7 +16,7 @@ fn display_ui_tree(tree: &UITree, indent: usize) {
     display_tree_node(&tree.root, indent + 1);
 }
 
-fn display_tree_node(node: &uia_interaction::core::UITreeNode, indent: usize) {
+fn display_tree_node(node: &ui_interaction::core::UITreeNode, indent: usize) {
     let indent_str = "  ".repeat(indent);
     info!("{}Element: {} (Type: {})", indent_str, node.name, node.control_type);
     info!("{}Enabled: {}, Visible: {}", indent_str, node.is_enabled, node.is_visible);

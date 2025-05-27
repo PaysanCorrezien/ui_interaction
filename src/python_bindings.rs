@@ -7,8 +7,8 @@ use pyo3::prelude::*;
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
 use log::{debug, warn};
-use ::uia_interaction::core::{UIAutomation, Window, UIElement, UITree, UITreeNode, UIQuery, ApplicationManager, ApplicationInfo, AppendPosition};
-use ::uia_interaction::factory::{UIAutomationFactory, ApplicationManagerFactory};
+use ::ui_interaction::core::{UIAutomation, Window, UIElement, UITree, UITreeNode, UIQuery, ApplicationManager, ApplicationInfo, AppendPosition};
+use ::ui_interaction::factory::{UIAutomationFactory, ApplicationManagerFactory};
 
 // =============================================================================
 // THREAD SAFETY UTILITIES
