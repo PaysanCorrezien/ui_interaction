@@ -38,3 +38,7 @@ path = "examples/list_applications_demo.rs"
 [[example]]
 name = "vesktop_demo"
 path = "examples/vesktop_demo.rs"
+
+[[example]]
+name = "unicode_test"
+path = "examples/unicode_test.rs"

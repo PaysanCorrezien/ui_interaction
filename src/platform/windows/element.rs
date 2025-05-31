@@ -163,53 +163,92 @@ impl CoreUIElement for WindowsElement {
         }
         thread::sleep(Duration::from_millis(50));
 
-        // Split the text by newlines
-        let lines: Vec<&str> = text.split('\n').collect();
-
-        // Type each line separately
-        for (i, line) in lines.iter().enumerate() {
-            // Type the line
-            thread::sleep(Duration::from_millis(50));
-            if let Err(e) = self.element.send_text(line, 10) {
-                warn!("Failed to type line {}: {}", i, e);
-                return Err(format!("Failed to type line {}: {}", i, e).into());
-            }
-
-            // If not the last line, press Shift+Enter to create a new line
-            if i < lines.len() - 1 {
-                thread::sleep(Duration::from_millis(50));
-                if let Err(e) = self.element.send_keys("{shift}{enter}", 20) {
-                    warn!("Failed to create new line after line {}: {}", i, e);
-                    return Err(format!("Failed to create new line after line {}: {}", i, e).into());
-                }
-            }
+        // Step 1: Try to send the whole text at once
+        info!("Attempting to set entire text: '{}'", text);
+        
+        // Try sending the whole text
+        if let Err(e) = self.element.send_text(text, 30) {
+            warn!("Failed to send entire text: {}", e);
+            return Err(format!("Failed to send text: {}", e).into());
         }
-
-        info!("Set new text in input field using keyboard input");
-
-        // Verify the text was set correctly
-        thread::sleep(Duration::from_millis(100)); // Give more time for text to be set
-        match self.get_text() {
-            Ok(current_text) => {
-                if current_text == text {
-                    info!("Verified text was set correctly: {}", current_text);
-                } else {
-                    warn!("Text was not set correctly. Expected: {}, Got: {}", text, current_text);
-                    // Try one more time with a longer delay
-                    thread::sleep(Duration::from_millis(200));
-                    match self.get_text() {
-                        Ok(retry_text) => {
-                            if retry_text == text {
-                                info!("Text verified on retry: {}", retry_text);
-                            } else {
-                                warn!("Text still not set correctly on retry. Expected: {}, Got: {}", text, retry_text);
-                            }
+        
+        // Step 2: Verify what actually got input
+        thread::sleep(Duration::from_millis(200)); // Give time for text to be processed
+        let actual_text = self.get_text().unwrap_or_default();
+        
+        info!("Expected text: '{}'", text);
+        info!("Actual text: '{}'", actual_text);
+        
+        // Step 3: Check if we got what we wanted
+        if actual_text == text {
+            info!("✓ Text set correctly on first try");
+            return Ok(());
+        }
+        
+        // Step 4: If not perfect, clear and try correction approach
+        warn!("Text not set correctly, attempting corrections...");
+        
+        // Clear everything and try word-by-word
+        if let Err(e) = self.element.send_keys("{Ctrl}a{Delete}", 10) {
+            warn!("Failed to clear text for correction: {}", e);
+        }
+        thread::sleep(Duration::from_millis(50));
+        
+        // Try word-by-word correction
+        let words: Vec<&str> = text.split_whitespace().collect();
+        for (i, word) in words.iter().enumerate() {
+            info!("Setting word {}: '{}'", i + 1, word);
+            
+            if let Err(e) = self.element.send_text(word, 20) {
+                warn!("Failed to send word '{}': {}, trying character-by-character", word, e);
+                
+                // If word fails, try character by character for this word only
+                for ch in word.chars() {
+                    let char_str = ch.to_string();
+                    
+                    // Handle newlines specially
+                    if ch == '\n' {
+                        if let Err(e) = self.element.send_keys("{shift}{enter}", 20) {
+                            warn!("Failed to add newline: {}", e);
                         }
-                        Err(e) => warn!("Failed to verify text on retry: {}", e),
+                        continue;
+                    }
+                    
+                    if let Err(e2) = self.element.send_text(&char_str, 15) {
+                        warn!("Failed to send character '{}': {}", ch, e2);
+                    }
+                    
+                    // Small delay for non-ASCII characters
+                    if !ch.is_ascii() {
+                        thread::sleep(Duration::from_millis(10));
                     }
                 }
             }
-            Err(e) => warn!("Failed to verify text: {}", e),
+            
+            // Add space between words (except for last word)
+            if i < words.len() - 1 {
+                if let Err(e) = self.element.send_text(" ", 10) {
+                    warn!("Failed to send space: {}", e);
+                }
+            }
+            
+            // Small delay between words
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        info!("Completed text setting with corrections");
+
+        // Final verification
+        thread::sleep(Duration::from_millis(100));
+        match self.get_text() {
+            Ok(current_text) => {
+                if current_text == text {
+                    info!("✓ Text verified correctly after corrections");
+                } else {
+                    warn!("Text still not correct after corrections. Expected: '{}', Got: '{}'", text, current_text);
+                }
+            }
+            Err(e) => warn!("Failed to verify final text: {}", e),
         }
 
         Ok(())
@@ -254,26 +293,88 @@ impl CoreUIElement for WindowsElement {
         // Add a small delay after positioning
         thread::sleep(Duration::from_millis(50));
 
-        // Handle multiline text properly
-        let lines: Vec<&str> = text.lines().collect();
-        for (i, line) in lines.iter().enumerate() {
-            // Type the line
-            if let Err(e) = self.element.send_text(line, 10) {
-                warn!("Failed to type line {}: {}", i, e);
-                return Err(format!("Failed to type line {}: {}", i, e).into());
-            }
-
-            // If not the last line, add a newline
-            if i < lines.len() - 1 {
-                thread::sleep(Duration::from_millis(50));
-                if let Err(e) = self.element.send_keys("+{ENTER}", 20) {
-                    warn!("Failed to add newline after line {}: {}", i, e);
-                    return Err(format!("Failed to add newline after line {}: {}", i, e).into());
+        // Step 1: Try to send the whole text at once
+        info!("Attempting to send entire text: '{}'", text);
+        
+        // Get text before appending to know where we started
+        let text_before = self.get_text().unwrap_or_default();
+        
+        // Try sending the whole text
+        if let Err(e) = self.element.send_text(text, 30) {
+            warn!("Failed to send entire text: {}", e);
+            return Err(format!("Failed to send text: {}", e).into());
+        }
+        
+        // Step 2: Verify what actually got input
+        thread::sleep(Duration::from_millis(200)); // Give time for text to be processed
+        let text_after = self.get_text().unwrap_or_default();
+        
+        // Extract what was actually appended
+        let actually_appended = if text_after.len() > text_before.len() {
+            &text_after[text_before.len()..]
+        } else {
+            ""
+        };
+        
+        info!("Expected to append: '{}'", text);
+        info!("Actually appended: '{}'", actually_appended);
+        
+        // Step 3: Check if we got what we wanted
+        if actually_appended == text {
+            info!("✓ Text appended correctly on first try");
+            return Ok(());
+        }
+        
+        // Step 4: If not perfect, identify and fix differences
+        warn!("Text not appended correctly, attempting corrections...");
+        
+        // Clear what we just added and try correction approach
+        let chars_to_remove = actually_appended.chars().count();
+        if chars_to_remove > 0 {
+            // Select and delete what was incorrectly added
+            for _ in 0..chars_to_remove {
+                if let Err(e) = self.element.send_keys("{BACKSPACE}", 10) {
+                    warn!("Failed to backspace: {}", e);
+                    break;
                 }
             }
+            thread::sleep(Duration::from_millis(100));
+        }
+        
+        // Try word-by-word correction
+        let words: Vec<&str> = text.split_whitespace().collect();
+        for (i, word) in words.iter().enumerate() {
+            info!("Sending word {}: '{}'", i + 1, word);
+            
+            if let Err(e) = self.element.send_text(word, 20) {
+                warn!("Failed to send word '{}': {}, trying character-by-character", word, e);
+                
+                // If word fails, try character by character for this word only
+                for ch in word.chars() {
+                    let char_str = ch.to_string();
+                    if let Err(e2) = self.element.send_text(&char_str, 15) {
+                        warn!("Failed to send character '{}': {}", ch, e2);
+                    }
+                    
+                    // Small delay for non-ASCII characters
+                    if !ch.is_ascii() {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                }
+            }
+            
+            // Add space between words (except for last word)
+            if i < words.len() - 1 {
+                if let Err(e) = self.element.send_text(" ", 10) {
+                    warn!("Failed to send space: {}", e);
+                }
+            }
+            
+            // Small delay between words
+            thread::sleep(Duration::from_millis(20));
         }
 
-        info!("Successfully appended text to input field");
+        info!("Completed text append with corrections");
         Ok(())
     }
 

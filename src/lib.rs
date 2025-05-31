@@ -121,3 +121,122 @@ pub use platform::windows::{WindowsUIAutomation, WindowsWindow, WindowsElement, 
 
 #[cfg(target_os = "linux")]
 pub use platform::linux::{LinuxUIAutomation, LinuxWindow, LinuxUIElement};
+
+use std::error::Error;
+
+/// Create a UI automation instance for the current platform
+pub fn create_automation() -> Result<Box<dyn UIAutomation>, Box<dyn Error>> {
+    UIAutomationFactory::new()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::AppendPosition;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_character_encoding_detection() {
+        // Test our character detection logic
+        let test_cases = vec![
+            ("Hello World", false), // ASCII only
+            ("Demain, réunion de famille", true), // Contains é
+            ("ça va être chiant", true), // Contains ç, à, ê
+            ("Test 123", false), // ASCII only
+            ("Côte d'Azur", true), // Contains ô
+            ("naïve café", true), // Contains ï, é
+        ];
+
+        for (text, expected_has_special) in test_cases {
+            let has_special = text.chars().any(|c| !c.is_ascii());
+            assert_eq!(has_special, expected_has_special, 
+                "Text '{}' special character detection failed", text);
+        }
+    }
+
+    #[test] 
+    #[ignore] // This test requires manual setup and interaction
+    fn test_special_character_input() {
+        // This test needs to be run manually with a text field focused
+        let automation = create_automation().expect("Failed to create automation");
+        
+        let test_text = "Demain, réunion de famille. Ambiance pourrie, ça va être chiant.";
+        println!("Testing special character input: '{}'", test_text);
+        
+        // Wait for user to focus on a text field
+        println!("Focus on a text input field and press Enter in the console...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).expect("Failed to read input");
+        
+        let focused_element = automation.get_focused_element()
+            .expect("Failed to get focused element");
+        
+        // Clear the field
+        focused_element.set_text("")
+            .expect("Failed to clear text");
+        
+        // Set text with special characters
+        focused_element.set_text(test_text)
+            .expect("Failed to set text");
+        
+        // Wait a bit for the text to be processed
+        thread::sleep(Duration::from_millis(500));
+        
+        // Get the text back
+        let result_text = focused_element.get_text()
+            .expect("Failed to get text");
+        
+        println!("Expected: '{}'", test_text);
+        println!("Got:      '{}'", result_text);
+        
+        // Check character by character
+        let expected_chars: Vec<char> = test_text.chars().collect();
+        let result_chars: Vec<char> = result_text.chars().collect();
+        
+        for (i, (expected, actual)) in expected_chars.iter().zip(result_chars.iter()).enumerate() {
+            if expected != actual {
+                println!("Character {} differs: expected '{}' (U+{:04X}), got '{}' (U+{:04X})", 
+                    i, expected, *expected as u32, actual, *actual as u32);
+            }
+        }
+        
+        assert_eq!(test_text, result_text, "Character encoding test failed");
+    }
+
+    #[test]
+    #[ignore] // This test requires manual setup and interaction  
+    fn test_append_special_characters() {
+        let automation = create_automation().expect("Failed to create automation");
+        
+        let initial_text = "Initial text: ";
+        let append_text = "réunion été";
+        let expected_final = format!("{}{}", initial_text, append_text);
+        
+        println!("Testing append with special characters");
+        println!("Focus on a text input field and press Enter in the console...");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input).expect("Failed to read input");
+        
+        let focused_element = automation.get_focused_element()
+            .expect("Failed to get focused element");
+        
+        // Set initial text
+        focused_element.set_text(initial_text)
+            .expect("Failed to set initial text");
+        
+        // Append text with special characters
+        focused_element.append_text(append_text, AppendPosition::EndOfText)
+            .expect("Failed to append text");
+        
+        thread::sleep(Duration::from_millis(500));
+        
+        let result_text = focused_element.get_text()
+            .expect("Failed to get final text");
+        
+        println!("Expected: '{}'", expected_final);
+        println!("Got:      '{}'", result_text);
+        
+        assert_eq!(expected_final, result_text, "Append special characters test failed");
+    }
+}
