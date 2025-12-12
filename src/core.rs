@@ -39,6 +39,7 @@ use std::collections::HashMap;
 use chrono::{DateTime, Utc};
 use windows::Win32::Foundation::RECT;
 use std::any::Any;
+use serde::{Serialize, Deserialize};
 
 /// Represents a rectangle in screen coordinates
 /// 
@@ -68,12 +69,202 @@ use std::any::Any;
 /// let height = rect.bottom - rect.top;  // 150
 /// ```
 #[allow(dead_code)]
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rect {
     pub left: i32,
     pub top: i32,
     pub right: i32,
     pub bottom: i32,
+}
+
+impl Rect {
+    /// Create a new Rect from coordinates
+    pub fn new(left: i32, top: i32, right: i32, bottom: i32) -> Self {
+        Rect { left, top, right, bottom }
+    }
+
+    /// Get the width of the rectangle
+    pub fn width(&self) -> i32 {
+        self.right - self.left
+    }
+
+    /// Get the height of the rectangle
+    pub fn height(&self) -> i32 {
+        self.bottom - self.top
+    }
+
+    /// Get the center point of the rectangle
+    pub fn center(&self) -> (i32, i32) {
+        ((self.left + self.right) / 2, (self.top + self.bottom) / 2)
+    }
+
+    /// Check if a point is inside this rectangle
+    pub fn contains(&self, x: i32, y: i32) -> bool {
+        x >= self.left && x < self.right && y >= self.top && y < self.bottom
+    }
+
+    /// Check if this rectangle intersects with another
+    pub fn intersects(&self, other: &Rect) -> bool {
+        self.left < other.right && self.right > other.left &&
+        self.top < other.bottom && self.bottom > other.top
+    }
+}
+
+/// Structured information about a UI element that contains text
+///
+/// This struct captures comprehensive information about text-containing UI elements,
+/// designed to make it easy to identify, locate, and extract text from applications.
+///
+/// # Fields
+///
+/// * `text` - The actual text content of the element
+/// * `name` - The accessible name/label of the element
+/// * `control_type` - The type of UI control (e.g., "Text", "Edit", "Document")
+/// * `automation_id` - The automation ID (if available) for reliable element identification
+/// * `class_name` - The window class name of the element
+/// * `bounds` - Screen position and size of the element
+/// * `is_selected` - Whether this text is currently selected
+/// * `is_editable` - Whether the text can be edited
+/// * `is_visible` - Whether the element is visible on screen
+/// * `is_enabled` - Whether the element is enabled for interaction
+/// * `parent_name` - Name of the parent element (useful for context)
+/// * `depth` - Depth in the UI tree (0 = root)
+///
+/// # Example
+///
+/// ```rust
+/// use uia_interaction::core::TextElementInfo;
+///
+/// // Process text elements from a window
+/// let text_elements: Vec<TextElementInfo> = get_text_elements(window)?;
+///
+/// for elem in text_elements {
+///     if let Some(bounds) = &elem.bounds {
+///         println!("Text: '{}' at ({}, {}) - {}x{}",
+///             elem.text, bounds.left, bounds.top,
+///             bounds.width(), bounds.height());
+///     }
+///     if elem.is_selected {
+///         println!("  -> Currently selected!");
+///     }
+/// }
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TextElementInfo {
+    /// The text content of the element
+    pub text: String,
+    /// The accessible name/label of the element
+    pub name: String,
+    /// The control type (e.g., "Text", "Edit", "Document", "Button")
+    pub control_type: String,
+    /// Automation ID for reliable element identification (if available)
+    pub automation_id: Option<String>,
+    /// Window class name of the element
+    pub class_name: Option<String>,
+    /// Screen bounds of the element
+    pub bounds: Option<Rect>,
+    /// Whether this text is currently selected
+    pub is_selected: bool,
+    /// Whether the text can be edited
+    pub is_editable: bool,
+    /// Whether the element is visible on screen
+    pub is_visible: bool,
+    /// Whether the element is enabled for interaction
+    pub is_enabled: bool,
+    /// Name of the parent element for context
+    pub parent_name: Option<String>,
+    /// Depth in the UI tree (0 = root)
+    pub depth: u32,
+}
+
+impl TextElementInfo {
+    /// Create a new TextElementInfo with default values
+    pub fn new(text: String) -> Self {
+        TextElementInfo {
+            text,
+            name: String::new(),
+            control_type: String::new(),
+            automation_id: None,
+            class_name: None,
+            bounds: None,
+            is_selected: false,
+            is_editable: false,
+            is_visible: true,
+            is_enabled: true,
+            parent_name: None,
+            depth: 0,
+        }
+    }
+
+    /// Check if this element has meaningful text content
+    pub fn has_text(&self) -> bool {
+        !self.text.trim().is_empty()
+    }
+
+    /// Check if the element is on screen (visible and has bounds)
+    pub fn is_on_screen(&self) -> bool {
+        self.is_visible && self.bounds.is_some()
+    }
+}
+
+/// Information about selected text in a UI element
+///
+/// This struct captures details about text that is currently selected
+/// (highlighted) by the user in a UI element.
+///
+/// # Fields
+///
+/// * `text` - The selected text content
+/// * `start_offset` - Character offset where selection starts
+/// * `end_offset` - Character offset where selection ends
+/// * `element_info` - Information about the element containing the selection
+///
+/// # Example
+///
+/// ```rust
+/// use uia_interaction::core::SelectedTextInfo;
+///
+/// // Get selected text from the focused element
+/// if let Some(selection) = get_selected_text(automation)? {
+///     println!("Selected: '{}' (chars {}-{})",
+///         selection.text,
+///         selection.start_offset,
+///         selection.end_offset);
+///     if let Some(bounds) = &selection.bounds {
+///         println!("Selection at ({}, {})", bounds.left, bounds.top);
+///     }
+/// }
+/// ```
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SelectedTextInfo {
+    /// The selected text content
+    pub text: String,
+    /// Character offset where selection starts
+    pub start_offset: i32,
+    /// Character offset where selection ends
+    pub end_offset: i32,
+    /// Bounding rectangle of the selected text (if available)
+    pub bounds: Option<Rect>,
+    /// Information about the element containing the selection
+    pub element_info: Option<TextElementInfo>,
+}
+
+impl SelectedTextInfo {
+    /// Create a new SelectedTextInfo
+    pub fn new(text: String, start_offset: i32, end_offset: i32) -> Self {
+        SelectedTextInfo {
+            text,
+            start_offset,
+            end_offset,
+            bounds: None,
+            element_info: None,
+        }
+    }
+
+    /// Get the length of the selection
+    pub fn selection_length(&self) -> i32 {
+        self.end_offset - self.start_offset
+    }
 }
 
 /// Represents a node in the UI tree hierarchy
@@ -370,14 +561,87 @@ pub trait UIElement {
     fn to_tree_node(&self) -> Result<Box<dyn UIElement>, Box<dyn Error>>;
 
     /// Get a reference to the underlying type for downcasting
-    /// 
+    ///
     /// Provides access to the concrete type implementing this trait,
     /// enabling downcasting to platform-specific implementations when needed.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Reference to the underlying type as `&dyn Any`
     fn as_any(&self) -> &dyn Any;
+
+    /// Get structured information about this text element
+    ///
+    /// Extracts comprehensive information about this element including its text content,
+    /// position, identifiers, and state. This is useful for building structured
+    /// representations of UI text content.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(TextElementInfo)` - Structured element information
+    /// * `Err(...)` - If element information cannot be retrieved
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let element = window.get_focused_element()?;
+    /// let info = element.get_text_element_info()?;
+    /// println!("Text: '{}' at {:?}", info.text, info.bounds);
+    /// ```
+    fn get_text_element_info(&self) -> Result<TextElementInfo, Box<dyn Error>> {
+        let text = self.get_text().unwrap_or_default();
+        let name = self.get_name().unwrap_or_default();
+        let control_type = self.get_type().unwrap_or_default();
+        let bounds = self.get_bounds().unwrap_or(None);
+        let is_enabled = self.is_enabled().unwrap_or(true);
+
+        let props = self.get_properties().unwrap_or_default();
+        let automation_id = props.get("automation_id").cloned();
+        let class_name = props.get("class_name").cloned();
+
+        // Determine if element is editable based on control type
+        let is_editable = matches!(control_type.as_str(), "Edit" | "Document" | "ComboBox");
+
+        Ok(TextElementInfo {
+            text,
+            name,
+            control_type,
+            automation_id,
+            class_name,
+            bounds,
+            is_selected: false,
+            is_editable,
+            is_visible: true,
+            is_enabled,
+            parent_name: None,
+            depth: 0,
+        })
+    }
+
+    /// Get the currently selected text within this element
+    ///
+    /// Retrieves text that is currently highlighted/selected by the user within
+    /// this element. Returns None if there is no selection or the element
+    /// doesn't support text selection.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(SelectedTextInfo))` - Information about the selected text
+    /// * `Ok(None)` - No text is selected
+    /// * `Err(...)` - If selection cannot be retrieved
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let element = automation.get_focused_element()?;
+    /// if let Some(selection) = element.get_selected_text()? {
+    ///     println!("Selected: '{}'", selection.text);
+    /// }
+    /// ```
+    fn get_selected_text(&self) -> Result<Option<SelectedTextInfo>, Box<dyn Error>> {
+        // Default implementation returns None - platform-specific implementations can override
+        Ok(None)
+    }
 }
 
 /// Trait for interacting with application windows
@@ -657,6 +921,140 @@ pub trait Window {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     fn find_elements(&self, query: &UIQuery) -> Result<Vec<Box<dyn UIElement>>, Box<dyn Error>>;
+
+    /// Get all text-containing elements in the window
+    ///
+    /// Scans the window's UI tree and returns structured information about all
+    /// elements that contain text. This is useful for extracting readable content
+    /// from applications.
+    ///
+    /// # Arguments
+    ///
+    /// * `options` - Options controlling what elements to include
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Vec<TextElementInfo>)` - List of text element information
+    /// * `Err(...)` - If elements cannot be retrieved
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// let options = TextExtractionOptions::default();
+    /// let text_elements = window.get_text_elements(&options)?;
+    ///
+    /// for elem in text_elements {
+    ///     if elem.has_text() {
+    ///         println!("[{}] {}: '{}'", elem.control_type, elem.name, elem.text);
+    ///     }
+    /// }
+    /// ```
+    fn get_text_elements(&self, options: &TextExtractionOptions) -> Result<Vec<TextElementInfo>, Box<dyn Error>>;
+
+    /// Get the selected text from the currently focused element in this window
+    ///
+    /// Retrieves any text that is currently selected (highlighted) within
+    /// the focused element of this window.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(SelectedTextInfo))` - Selected text information
+    /// * `Ok(None)` - No text is currently selected
+    /// * `Err(...)` - If selection cannot be retrieved
+    fn get_selected_text(&self) -> Result<Option<SelectedTextInfo>, Box<dyn Error>> {
+        let focused = self.get_focused_element()?;
+        focused.get_selected_text()
+    }
+}
+
+/// Options for text extraction from UI elements
+///
+/// Controls what elements are included when extracting text from a window.
+///
+/// # Example
+///
+/// ```rust
+/// let options = TextExtractionOptions {
+///     include_hidden: false,
+///     include_disabled: true,
+///     min_text_length: 1,
+///     control_types: Some(vec!["Text".to_string(), "Edit".to_string()]),
+///     max_depth: Some(10),
+/// };
+/// ```
+#[derive(Clone, Debug)]
+pub struct TextExtractionOptions {
+    /// Include elements that are not visible on screen
+    pub include_hidden: bool,
+    /// Include elements that are disabled
+    pub include_disabled: bool,
+    /// Minimum text length to include (0 = include empty)
+    pub min_text_length: usize,
+    /// Only include specific control types (None = all)
+    pub control_types: Option<Vec<String>>,
+    /// Maximum depth in UI tree to traverse (None = unlimited)
+    pub max_depth: Option<u32>,
+    /// Include element names as text if actual text is empty
+    pub include_names_as_text: bool,
+}
+
+impl Default for TextExtractionOptions {
+    fn default() -> Self {
+        TextExtractionOptions {
+            include_hidden: false,
+            include_disabled: true,
+            min_text_length: 1,
+            control_types: None,
+            max_depth: Some(20),
+            include_names_as_text: true,
+        }
+    }
+}
+
+impl TextExtractionOptions {
+    /// Create options that extract all text elements
+    pub fn all() -> Self {
+        TextExtractionOptions {
+            include_hidden: true,
+            include_disabled: true,
+            min_text_length: 0,
+            control_types: None,
+            max_depth: None,
+            include_names_as_text: true,
+        }
+    }
+
+    /// Create options for extracting only visible, non-empty text
+    pub fn visible_text_only() -> Self {
+        TextExtractionOptions {
+            include_hidden: false,
+            include_disabled: true,
+            min_text_length: 1,
+            control_types: Some(vec![
+                "Text".to_string(),
+                "Edit".to_string(),
+                "Document".to_string(),
+            ]),
+            max_depth: Some(20),
+            include_names_as_text: false,
+        }
+    }
+
+    /// Create options for extracting editable text fields
+    pub fn editable_only() -> Self {
+        TextExtractionOptions {
+            include_hidden: false,
+            include_disabled: false,
+            min_text_length: 0,
+            control_types: Some(vec![
+                "Edit".to_string(),
+                "Document".to_string(),
+                "ComboBox".to_string(),
+            ]),
+            max_depth: Some(20),
+            include_names_as_text: false,
+        }
+    }
 }
 
 /// Query system for finding UI elements with various criteria

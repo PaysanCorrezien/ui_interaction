@@ -112,7 +112,7 @@ pub mod platform;
 pub mod factory;
 
 // Re-export the main public API
-pub use core::{UIAutomation, Window, UIElement, ApplicationManager, ApplicationInfo, UIQuery, UITree, UITreeNode, AppendPosition, Rect};
+pub use core::{UIAutomation, Window, UIElement, ApplicationManager, ApplicationInfo, UIQuery, UITree, UITreeNode, AppendPosition, Rect, TextElementInfo, SelectedTextInfo, TextExtractionOptions};
 pub use factory::{UIAutomationFactory, ApplicationManagerFactory};
 
 // Re-export platform-specific types for advanced usage

@@ -8,7 +8,7 @@ use uiautomation::UITreeWalker;
 use windows::Win32::Foundation::RECT;
 use std::error::Error;
 use std::collections::HashMap;
-use crate::core::Rect;
+use crate::core::{Rect, TextElementInfo, SelectedTextInfo};
 use std::any::Any;
 use std::convert::TryInto;
 use crate::platform::windows::automation::AUTOMATION;
@@ -514,9 +514,77 @@ impl CoreUIElement for WindowsElement {
     }
 }
 
-// For backward compatibility
+// Additional WindowsElement methods
 impl WindowsElement {
+    /// For backward compatibility
     pub fn append_text_compat(&self, text: &str) -> Result<(), Box<dyn Error>> {
         self.append_text(text, AppendPosition::EndOfText)
+    }
+
+    /// Get selected text using UIA TextPattern - platform-specific implementation
+    pub fn get_selected_text_impl(&self) -> Result<Option<SelectedTextInfo>, Box<dyn Error>> {
+        // Try to get text selection using TextPattern
+        if let Ok(text_pattern) = self.element.get_pattern::<UITextPattern>() {
+            if let Ok(selections) = text_pattern.get_selection() {
+                if !selections.is_empty() {
+                    // Get the first selection range
+                    if let Some(range) = selections.get(0) {
+                        if let Ok(text) = range.get_text(-1) {
+                            if !text.is_empty() {
+                                // Get element info
+                                let element_info = self.get_text_element_info().ok();
+
+                                // Use element bounds as fallback for selection bounds
+                                let bounds = self.get_bounds().ok().flatten();
+
+                                return Ok(Some(SelectedTextInfo {
+                                    text,
+                                    start_offset: 0, // UIA doesn't easily provide offsets
+                                    end_offset: 0,
+                                    bounds,
+                                    element_info,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
+    }
+
+    /// Get comprehensive text element info - platform-specific implementation
+    pub fn get_text_element_info_impl(&self) -> Result<TextElementInfo, Box<dyn Error>> {
+        let text = self.get_text().unwrap_or_default();
+        let name = self.get_name().unwrap_or_default();
+        let control_type = self.get_type().unwrap_or_default();
+        let bounds = self.get_bounds().unwrap_or(None);
+        let is_enabled = self.is_enabled().unwrap_or(true);
+
+        let props = self.get_properties().unwrap_or_default();
+        let automation_id = props.get("automation_id").cloned();
+        let class_name = props.get("class_name").cloned();
+
+        // Determine if element is editable based on control type
+        let is_editable = matches!(control_type.as_str(), "Edit" | "Document" | "ComboBox");
+
+        // Check visibility
+        let is_visible = !self.is_offscreen().unwrap_or(true);
+
+        Ok(TextElementInfo {
+            text,
+            name,
+            control_type,
+            automation_id,
+            class_name,
+            bounds,
+            is_selected: false,
+            is_editable,
+            is_visible,
+            is_enabled,
+            parent_name: None,
+            depth: 0,
+        })
     }
 } 

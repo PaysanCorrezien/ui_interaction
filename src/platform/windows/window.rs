@@ -12,7 +12,7 @@ use uiautomation::types::{TreeScope, UIProperty};
 use uiautomation::variants::Variant;
 use uiautomation::controls::ControlType;
 
-use crate::core::{Window, UIElement, UITree, UIQuery, UITreeNode};
+use crate::core::{Window, UIElement, UITree, UIQuery, UITreeNode, TextElementInfo, TextExtractionOptions, Rect, SelectedTextInfo};
 use super::automation::WindowsUIAutomation;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -638,5 +638,233 @@ impl Window for WindowsWindow {
         debug!("Attempting to set window as foreground using UIAutomation SetFocus");
         self.element.set_focus()
             .map_err(|e| format!("Failed to set window as foreground: {}", e).into())
+    }
+
+    fn get_text_elements(&self, options: &TextExtractionOptions) -> Result<Vec<TextElementInfo>, Box<dyn Error>> {
+        let mut results = Vec::new();
+
+        // Create automation and walker
+        let automation = self.automation.automation.lock()?;
+        let walker = automation.create_tree_walker()?;
+
+        // Helper function to extract text elements recursively
+        fn extract_text_elements(
+            element: &UIAutomationElement,
+            walker: &uiautomation::UITreeWalker,
+            options: &TextExtractionOptions,
+            results: &mut Vec<TextElementInfo>,
+            depth: u32,
+            parent_name: Option<String>,
+        ) {
+            // Check max depth
+            if let Some(max_depth) = options.max_depth {
+                if depth > max_depth {
+                    return;
+                }
+            }
+
+            // Get control type
+            let control_type = if let Ok(variant) = element.get_property_value(UIProperty::ControlType) {
+                if let Ok(control_type_id) = <Variant as TryInto<i32>>::try_into(variant) {
+                    if let Ok(ct) = ControlType::try_from(control_type_id) {
+                        ct.to_string()
+                    } else {
+                        "Unknown".to_string()
+                    }
+                } else {
+                    "Unknown".to_string()
+                }
+            } else {
+                "Unknown".to_string()
+            };
+
+            // Check if we should include this control type
+            if let Some(ref allowed_types) = options.control_types {
+                if !allowed_types.contains(&control_type) {
+                    // Still recurse into children
+                    if let Ok(first_child) = walker.get_first_child(element) {
+                        extract_text_elements(&first_child, walker, options, results, depth + 1, parent_name.clone());
+                        let mut next = first_child;
+                        while let Ok(sibling) = walker.get_next_sibling(&next) {
+                            extract_text_elements(&sibling, walker, options, results, depth + 1, parent_name.clone());
+                            next = sibling;
+                        }
+                    }
+                    return;
+                }
+            }
+
+            // Check visibility
+            let is_offscreen = element.is_offscreen().unwrap_or(true);
+            let is_visible = !is_offscreen;
+
+            if !options.include_hidden && !is_visible {
+                // Still recurse into children - some may be visible
+                if let Ok(first_child) = walker.get_first_child(element) {
+                    extract_text_elements(&first_child, walker, options, results, depth + 1, parent_name.clone());
+                    let mut next = first_child;
+                    while let Ok(sibling) = walker.get_next_sibling(&next) {
+                        extract_text_elements(&sibling, walker, options, results, depth + 1, parent_name.clone());
+                        next = sibling;
+                    }
+                }
+                return;
+            }
+
+            // Check if enabled
+            let is_enabled = element.is_enabled().unwrap_or(true);
+            if !options.include_disabled && !is_enabled {
+                if let Ok(first_child) = walker.get_first_child(element) {
+                    extract_text_elements(&first_child, walker, options, results, depth + 1, parent_name.clone());
+                    let mut next = first_child;
+                    while let Ok(sibling) = walker.get_next_sibling(&next) {
+                        extract_text_elements(&sibling, walker, options, results, depth + 1, parent_name.clone());
+                        next = sibling;
+                    }
+                }
+                return;
+            }
+
+            // Get name
+            let name = element.get_name().unwrap_or_default();
+
+            // Get text content
+            let mut text = String::new();
+
+            // Try Value pattern first
+            use uiautomation::patterns::{UIValuePattern, UITextPattern};
+            if let Ok(value_pattern) = element.get_pattern::<UIValuePattern>() {
+                if let Ok(value) = value_pattern.get_value() {
+                    text = value;
+                }
+            }
+
+            // Try Text pattern if Value pattern didn't work
+            if text.is_empty() {
+                if let Ok(text_pattern) = element.get_pattern::<UITextPattern>() {
+                    if let Ok(doc_range) = text_pattern.get_document_range() {
+                        if let Ok(t) = doc_range.get_text(-1) {
+                            text = t;
+                        }
+                    }
+                }
+            }
+
+            // Use name as text if configured and text is empty
+            if text.is_empty() && options.include_names_as_text {
+                text = name.clone();
+            }
+
+            // Check minimum text length
+            if text.trim().len() >= options.min_text_length {
+                // Get bounds
+                let bounds = if let Ok(rect) = element.get_bounding_rectangle() {
+                    if let Ok(r) = <uiautomation::types::Rect as TryInto<RECT>>::try_into(rect) {
+                        Some(Rect {
+                            left: r.left,
+                            top: r.top,
+                            right: r.right,
+                            bottom: r.bottom,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Get automation ID
+                let automation_id = if let Ok(variant) = element.get_property_value(UIProperty::AutomationId) {
+                    let id = variant.to_string();
+                    if !id.is_empty() && id != "null" {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                // Get class name
+                let class_name = element.get_classname().ok();
+
+                // Determine if editable
+                let is_editable = matches!(control_type.as_str(), "Edit" | "Document" | "ComboBox");
+
+                let text_info = TextElementInfo {
+                    text,
+                    name,
+                    control_type: control_type.clone(),
+                    automation_id,
+                    class_name,
+                    bounds,
+                    is_selected: false,
+                    is_editable,
+                    is_visible,
+                    is_enabled,
+                    parent_name: parent_name.clone(),
+                    depth,
+                };
+
+                results.push(text_info);
+            }
+
+            // Get the current element's name for child context
+            let current_name = element.get_name().ok();
+
+            // Recurse into children
+            if let Ok(first_child) = walker.get_first_child(element) {
+                extract_text_elements(&first_child, walker, options, results, depth + 1, current_name.clone());
+                let mut next = first_child;
+                while let Ok(sibling) = walker.get_next_sibling(&next) {
+                    extract_text_elements(&sibling, walker, options, results, depth + 1, current_name.clone());
+                    next = sibling;
+                }
+            }
+        }
+
+        // Start extraction from root element
+        extract_text_elements(&self.element, &walker, options, &mut results, 0, None);
+
+        Ok(results)
+    }
+
+    fn get_selected_text(&self) -> Result<Option<SelectedTextInfo>, Box<dyn Error>> {
+        use uiautomation::patterns::UITextPattern;
+
+        // Get focused element
+        let automation = self.automation.automation.lock()?;
+        let focused = automation.get_focused_element()?;
+
+        // Try to get text selection using TextPattern
+        if let Ok(text_pattern) = focused.get_pattern::<UITextPattern>() {
+            if let Ok(selections) = text_pattern.get_selection() {
+                if !selections.is_empty() {
+                    // Get the first selection range
+                    if let Some(range) = selections.get(0) {
+                        if let Ok(text) = range.get_text(-1) {
+                            if !text.is_empty() {
+                                // Get element info
+                                let element_wrapper = super::element::WindowsElement::new(focused, None);
+                                let element_info = element_wrapper.get_text_element_info().ok();
+
+                                // Try to get bounds from the enclosing element as a fallback
+                                let bounds = element_wrapper.get_bounds().ok().flatten();
+
+                                return Ok(Some(SelectedTextInfo {
+                                    text,
+                                    start_offset: 0, // UIA doesn't easily provide offsets
+                                    end_offset: 0,
+                                    bounds,
+                                    element_info,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        Ok(None)
     }
 } 
